@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Local env / secrets — never commit real credentials or KMS keys
+.env
+*.local
+db/config/*.local.conf
+
+# Scratch
+/tmp_*
+*.scratch.sql

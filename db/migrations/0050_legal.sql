@@ -778,8 +778,8 @@ END;
 $$;
 COMMENT ON FUNCTION legal.deny_delete_document_when_legal_hold() IS 'BEFORE DELETE guard on legal.agreement_document: raises if the parent agreement is under legal hold, so held contract files survive purge/erasure. Allows the delete if the parent is already gone (cascade from a non-held agreement).';
 
--- Guard fires BEFORE the audit trigger ordering is irrelevant (it aborts the
--- statement). Named without zzz_ so it is not confused with the audit trigger.
+-- Named without zzz_ so it is not confused with the audit trigger. (A BEFORE
+-- trigger that aborts the statement makes ordering vs the AFTER audit moot.)
 DROP TRIGGER IF EXISTS trg_agreement_legal_hold_guard ON legal.agreement;
 CREATE TRIGGER trg_agreement_legal_hold_guard
     BEFORE DELETE ON legal.agreement

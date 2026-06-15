@@ -463,17 +463,17 @@ BEGIN
         v_args := '';
     END IF;
 
-    EXECUTE format('DROP TRIGGER IF EXISTS zzz_audit_%I ON %I.%I', p_table, p_schema, p_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', 'zzz_audit_' || p_table, p_schema, p_table);
     EXECUTE format(
-        'CREATE TRIGGER zzz_audit_%I AFTER INSERT OR UPDATE OR DELETE ON %I.%I '
+        'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I.%I '
         'FOR EACH ROW EXECUTE FUNCTION audit.if_modified(%s)',
-        p_table, p_schema, p_table, v_args);
+        'zzz_audit_' || p_table, p_schema, p_table, v_args);
 
-    EXECUTE format('DROP TRIGGER IF EXISTS zzz_audit_truncate_%I ON %I.%I', p_table, p_schema, p_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', 'zzz_audit_truncate_' || p_table, p_schema, p_table);
     EXECUTE format(
-        'CREATE TRIGGER zzz_audit_truncate_%I AFTER TRUNCATE ON %I.%I '
+        'CREATE TRIGGER %I AFTER TRUNCATE ON %I.%I '
         'FOR EACH STATEMENT EXECUTE FUNCTION audit.log_truncate()',
-        p_table, p_schema, p_table);
+        'zzz_audit_truncate_' || p_table, p_schema, p_table);
 END;
 $$;
 COMMENT ON FUNCTION audit.attach_audit(text, text, text, text) IS
