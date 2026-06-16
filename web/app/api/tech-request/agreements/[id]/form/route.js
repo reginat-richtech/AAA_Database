@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server';
 import { query } from '../../../../../../lib/db';
 import { schemaFor, formTypeFor, autofillFromAgreement, JOTFORM_IDS, FORM_TITLES } from '../../../../../../lib/techRequestForm';
+import { requireUser, canSee } from '../../../../../../lib/access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(_request, { params }) {
+  const { user, response } = await requireUser();
+  if (response) return response;
   const { id } = await params;
   const a = (await query(
     'select *, extracted_json as extracted from ops.legal_agreement where id = $1', [id]
   )).rows[0];
-  if (!a) return NextResponse.json({ error: 'agreement not found' }, { status: 404 });
+  if (!a || !canSee(user, a)) return NextResponse.json({ error: 'agreement not found' }, { status: 404 });
 
   const sub = (await query(
     `select id, status, answers from ops.tech_request_submission where agreement_id = $1
@@ -30,7 +33,7 @@ export async function GET(_request, { params }) {
     values,
     submission: sub,
     locked: sub?.status === 'finalized' || sub?.status === 'approved',
-    can_approve: sub?.status === 'finalized',
+    can_approve: user.isAdmin && sub?.status === 'finalized',
     jotform_form_id: JOTFORM_IDS[formType],
     jotform_form_title: FORM_TITLES[formType],
   });

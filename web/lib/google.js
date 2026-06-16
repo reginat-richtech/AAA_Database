@@ -7,11 +7,15 @@ import path from 'node:path';
 let _clients;
 async function getClients() {
   if (_clients !== undefined) return _clients;
-  const saPath = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const saRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const subject = process.env.GOOGLE_IMPERSONATE_SUBJECT;
-  if (!saPath || !subject) { _clients = null; return null; }
+  if (!saRaw || !subject) { _clients = null; return null; }
   try {
-    const sa = JSON.parse(readFileSync(path.resolve(saPath), 'utf8'));
+    // Accept the service-account creds as either inline JSON (a cloud app setting
+    // / Key Vault reference, used in production) or a path to a JSON file (local
+    // dev). Inline JSON starts with '{'; anything else is treated as a file path.
+    const trimmed = saRaw.trim();
+    const sa = JSON.parse(trimmed.startsWith('{') ? trimmed : readFileSync(path.resolve(trimmed), 'utf8'));
     const { google } = await import('googleapis');
     const auth = new google.auth.JWT({
       email: sa.client_email,

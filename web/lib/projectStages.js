@@ -103,10 +103,10 @@ export function buildProject(a, submission, confirmation, travelApprovedSet) {
   }));
 
   return {
-    id: a.id, project_number: a.project_number, counterparty: a.counterparty,
+    id: a.id, project_number: a.project_number, title: a.title, counterparty: a.counterparty,
     agreement_type: a.agreement_type, robot_types: a.robot_types, robot_count: a.robot_count,
     salesman_name: a.salesman_name, salesman_email: a.salesman_email, so_number: so,
-    stage: stageIdx, stage_key: stageKey,
+    created_at: a.created_at, stage: stageIdx, stage_key: stageKey,
     jotform_url: jf?.url || null, calendar_link: cal?.html_link || null,
     nodes,
   };

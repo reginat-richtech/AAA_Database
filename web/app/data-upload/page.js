@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { PageHeader } from '../_components/blueprint';
 
 const EMPTY_ROBOT = { name: '', robot_type: '', service_type: '', quantity: 1, unit_price: null };
 
@@ -71,8 +72,7 @@ export default function DataUpload() {
 
   return (
     <>
-      <h1>Data Upload</h1>
-      <p className="sub">Upload an agreement PDF → AI extracts the fields → review &amp; edit → save.</p>
+      <PageHeader title="Data Upload" sub="Upload an agreement PDF → AI extracts the fields → review & edit → save." sheet="Data Upload" />
 
       <div className="split">
         <div>

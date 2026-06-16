@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { pool, query } from '../../../lib/db';
 import { extractAgreement, headlineFields } from '../../../lib/extract';
+import { requireUser, visibilitySql } from '../../../lib/access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,13 +11,20 @@ const LIST_COLS = `id, project_number, filename, status, error, agreement_type, 
   salesman_email, deal_id, extract_method, created_at`;
 
 export async function GET() {
+  const { user, response } = await requireUser();
+  if (response) return response;
+  const vis = visibilitySql(user, 1);
+
   const { rows } = await query(
-    `select ${LIST_COLS} from ops.legal_agreement order by created_at desc limit 100`
+    `select ${LIST_COLS} from ops.legal_agreement where ${vis.sql} order by created_at desc limit 100`,
+    vis.params
   );
   return NextResponse.json({ agreements: rows, count: rows.length });
 }
 
 export async function POST(request) {
+  const { user, response } = await requireUser();
+  if (response) return response;
   const form = await request.formData();
   const file = form.get('file');
   const salesman_name = String(form.get('salesman_name') || '').trim() || null;
@@ -42,7 +50,7 @@ export async function POST(request) {
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
      returning ${LIST_COLS}, extracted_json as extracted, summary`,
     [
-      file.name || 'document.pdf', bytes.length, extract_method, 'admin',
+      file.name || 'document.pdf', bytes.length, extract_method, user.email,
       salesman_name, salesman_email, deal_id,
       ok ? 'ready' : 'error', error,
       hf.agreement_type ?? null, hf.title ?? null, hf.counterparty ?? null,

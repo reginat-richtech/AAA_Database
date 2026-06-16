@@ -1,12 +1,15 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { PageHeader, StageRail, ProjectRail, STAGES, STAGE_RAMP, hexA } from '../_components/blueprint';
 
 const LEAF_ICON = { done: '✓', pending: '○', manual: '·' };
 
-function dotStyle(node) {
-  if (node.status === 'done') return { background: node.color, borderColor: node.color };
-  if (node.status === 'current') return { borderColor: node.color, boxShadow: `0 0 0 3px ${node.color}33` };
-  if (node.status === 'manual') return { borderStyle: 'dashed' };
+// Node styling shared by the per-project mini-rail and the expanded tree.
+// `color` is the stage's ramp color so the whole page matches the dashboard.
+function dotStyle(node, color) {
+  if (node.status === 'done') return { background: color, borderColor: color };
+  if (node.status === 'current') return { borderColor: color, boxShadow: `0 0 0 3px ${hexA(color, 0.3)}` };
+  if (node.status === 'manual') return { borderColor: color, borderStyle: 'dashed' };
   return {};
 }
 
@@ -27,17 +30,12 @@ export default function ProjectTracker() {
 
   return (
     <>
-      <h1>Project Tracker</h1>
-      <p className="sub">Read-only workflow tree per project. Each agreement advances through 9 stages as its tech request, approval, confirmation, and travel steps complete.</p>
+      <PageHeader title="Project Tracker" sub="Read-only workflow tree per project. Each agreement advances through 9 stages as its tech request, approval, confirmation, and travel steps complete." sheet="Project Tracker" />
 
-      <div className="legend">
-        {data.stages.map((s) => (
-          <span className="item" key={s.key}>
-            <span className="swatch" style={{ background: s.color, opacity: s.tracked ? 1 : 0.45 }} />
-            {s.label} <b style={{ color: 'var(--ink)' }}>{data.counts[s.key] || 0}</b>
-          </span>
-        ))}
-      </div>
+      <section className="panel">
+        <div className="panel-title"><h2>Project process tracker</h2><span className="meta">9 stages · red → blue</span></div>
+        <StageRail stages={STAGES} counts={data.counts} />
+      </section>
 
       <div className="toolbar">
         <input placeholder="Search client, salesman, SO#, robot…" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 320 }} />
@@ -47,34 +45,43 @@ export default function ProjectTracker() {
       {projects.length === 0 && <p className="note">No projects yet — upload an agreement in Data Upload.</p>}
 
       {projects.map((p) => {
+        const curColor = STAGE_RAMP[p.stage];
         const cur = p.nodes[p.stage];
+        const isOpen = open === p.id;
         return (
-          <div className="pcard" key={p.id} onClick={() => setOpen(open === p.id ? null : p.id)}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <b>{p.project_number}</b> — {p.counterparty || '—'}
-                <span className="note"> · {p.agreement_type}{p.robot_types ? ` · ${p.robot_types}` : ''}</span>
+          <div className="pcard" key={p.id} onClick={() => setOpen(isOpen ? null : p.id)}>
+            <div className="pc-head">
+              <div className="pc-title">
+                <span className="pc-id">{p.project_number}</span>
+                <span className="pc-name">{p.title || p.counterparty || '—'}</span>
               </div>
-              <span className="chip" style={{ background: `${cur.color}22`, color: cur.color }}>{cur.label}</span>
+              <span className="pc-stage" style={{ background: curColor }}>Stage {p.stage + 1}/9 · {cur.label}</span>
             </div>
-            <div className="stepper">
-              {p.nodes.map((n) => <span key={n.key} className="dot" title={`${n.label} — ${n.status}`} style={dotStyle(n)} />)}
-            </div>
-            {(p.jotform_url || p.calendar_link) && (
-              <div className="note" style={{ marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
-                {p.jotform_url && <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm</a>}
-                {p.jotform_url && p.calendar_link && ' · '}
-                {p.calendar_link && <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar</a>}
-              </div>
-            )}
 
-            {open === p.id && (
+            <div className="pc-meta">
+              {p.agreement_type && <span className="type-pill">{p.agreement_type}</span>}
+              {p.robot_types && <span>🤖 {p.robot_types}{p.robot_count != null ? ` · ${p.robot_count} unit${p.robot_count === 1 ? '' : 's'}` : ''}</span>}
+              {p.salesman_name && <span>👤 {p.salesman_name}</span>}
+              {p.so_number && <span>SO {p.so_number}</span>}
+              {p.created_at && <span>📅 {new Date(p.created_at).toLocaleDateString()}</span>}
+              {(p.jotform_url || p.calendar_link) && (
+                <span className="pc-link" onClick={(e) => e.stopPropagation()}>
+                  {p.jotform_url && <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm ↗</a>}
+                  {p.jotform_url && p.calendar_link && ' · '}
+                  {p.calendar_link && <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar ↗</a>}
+                </span>
+              )}
+            </div>
+
+            <ProjectRail nodes={p.nodes} />
+
+            {isOpen && (
               <div className="tree" onClick={(e) => e.stopPropagation()}>
-                {p.nodes.map((n) => (
+                {p.nodes.map((n, i) => (
                   <div className="tnode" key={n.key}>
-                    <div className="h"><span className="dot" style={dotStyle(n)} /> {n.label} <span className="note" style={{ fontWeight: 400 }}>· {n.status}</span></div>
-                    {n.tasks.map((t, i) => (
-                      <div className="tleaf" key={i}>
+                    <div className="h"><span className="dot" style={dotStyle(n, STAGE_RAMP[i])} /> {i + 1}. {n.label} <span className="note" style={{ fontWeight: 400 }}>· {n.status}</span></div>
+                    {n.tasks.map((t, j) => (
+                      <div className="tleaf" key={j}>
                         <span className="s">{LEAF_ICON[t.status]}</span>
                         <span>{t.label}{t.detail ? <span className="d"> — {t.detail}</span> : null}{t.url ? <> · <a href={t.url} target="_blank" rel="noreferrer">link</a></> : null}</span>
                       </div>

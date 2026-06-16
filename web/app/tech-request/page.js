@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { PageHeader } from '../_components/blueprint';
 
 const STATUS_CHIP = { none: '', saved: 'warn', finalized: 'info', approved: 'ok' };
 
@@ -75,8 +76,7 @@ export default function TechRequest() {
   if (!form) {
     return (
       <>
-        <h1>Tech Request</h1>
-        <p className="sub">Pick an agreement to start its technician/event request form.</p>
+        <PageHeader title="Tech Request" sub="Pick an agreement to start its technician/event request form." sheet="Tech Request" />
         {msg?.err && <p className="error">{msg.err}</p>}
         <div className="panel tablewrap">
           <table>
@@ -100,8 +100,7 @@ export default function TechRequest() {
   const st = form.submission?.status;
   return (
     <>
-      <h1>Tech Request — {form.project_number}</h1>
-      <p className="sub">{form.counterparty} · {form.jotform_form_title}</p>
+      <PageHeader title={`Tech Request — ${form.project_number}`} sub={`${form.counterparty} · ${form.jotform_form_title}`} sheet="Tech Request" />
       <div className="toolbar">
         <button className="secondary" onClick={() => { setForm(null); loadList(); }}>← Back to list</button>
         {st && <span className={'chip ' + (STATUS_CHIP[st] || '')}>{st}</span>}

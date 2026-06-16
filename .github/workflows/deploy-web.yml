@@ -1,0 +1,72 @@
+name: Deploy web → Azure App Service
+
+# Builds the Next.js app in web/ and deploys it to Azure App Service (Linux, Node).
+# Runs on every push to main that touches web/, and can be run manually.
+#
+# ── ONE-TIME SETUP ───────────────────────────────────────────────────────────
+# 1. Create the App Service:  Linux plan, runtime stack = Node 20 LTS.
+#    Note its name and put it in AZURE_WEBAPP_NAME below.
+#
+# 2. Download its publish profile:
+#    App Service → Overview → "Get publish profile" (downloads an .xml file).
+#    Then in GitHub:  repo → Settings → Secrets and variables → Actions →
+#    New repository secret →
+#        Name:  AZURE_WEBAPP_PUBLISH_PROFILE
+#        Value: paste the entire contents of that .xml file
+#
+# 3. App Service → Settings → Configuration → Application settings — add:
+#        DATABASE_URL                  postgresql://app_rw:<pw>@<host>.postgres.database.azure.com:5432/aaa?sslmode=require
+#        ANTHROPIC_API_KEY             <your key>
+#        CLAUDE_MODEL                  claude-sonnet-4-6
+#        JOTFORM_API_KEY               <your key>          (optional)
+#        HUBSPOT_TOKEN                 <your token>        (optional)
+#        GOOGLE_SERVICE_ACCOUNT_JSON   <paste the whole service-account JSON inline>  (optional)
+#        GOOGLE_IMPERSONATE_SUBJECT    chatgpt@richtechsystem.com                     (optional)
+#        SCM_DO_BUILD_DURING_DEPLOYMENT  false   ← we build here, so Azure must NOT rebuild
+#    (Use Key Vault references for the secret values once it's working.)
+#
+# 4. App Service → Settings → Configuration → General settings →
+#    Startup Command:  npm start    (App Service usually auto-detects this; set it
+#    explicitly if the app doesn't start.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch: {}
+
+env:
+  AZURE_WEBAPP_NAME: aaa-web   # <-- CHANGE to your App Service name
+  NODE_VERSION: '20'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: web

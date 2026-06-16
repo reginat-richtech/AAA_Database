@@ -1,15 +1,22 @@
 import { NextResponse } from 'next/server';
 import { query } from '../../../../lib/db';
 import { PROJECT_STAGES, normSo, buildProject } from '../../../../lib/projectStages';
+import { requireUser, visibilitySql } from '../../../../lib/access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const { user, response } = await requireUser();
+  if (response) return response;
+  // Restrict projects to agreements this user owns (admins see all).
+  const vis = visibilitySql(user, 1);
+
   const agreements = (await query(
     `select id, project_number, filename, status, error, extract_method, agreement_type, title,
             counterparty, robot_types, robot_count, salesman_name, salesman_email, created_at
-     from ops.legal_agreement order by created_at desc limit 300`
+     from ops.legal_agreement where ${vis.sql} order by created_at desc limit 300`,
+    vis.params
   )).rows;
 
   // Best submission per agreement (approved > finalized > saved).

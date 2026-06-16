@@ -1,30 +1,32 @@
 import './globals.css';
-import Link from 'next/link';
+import Nav from './_components/Nav';
+import UserMenu from './_components/UserMenu';
+import Providers from './_components/Providers';
+import { auth } from '../auth';
+import { isAdminEmail } from '../lib/access';
 
 export const metadata = {
   title: 'AAA — Admin',
   description: 'Admin console for the AAA database',
 };
 
-const NAV = [
-  { href: '/data-upload', label: 'Data Upload' },
-  { href: '/tech-request', label: 'Tech Request' },
-  { href: '/project-tracker', label: 'Project Tracker' },
-];
+export default async function RootLayout({ children }) {
+  const session = await auth();
+  const email = session?.user?.email || null;
 
-export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <header className="topbar">
-          <div className="brand">AAA <span>Admin</span></div>
-          <nav>
-            {NAV.map((n) => (
-              <Link key={n.href} href={n.href}>{n.label}</Link>
-            ))}
-          </nav>
-        </header>
-        <main className="container">{children}</main>
+        <Providers session={session}>
+          {email && (
+            <header className="topbar">
+              <div className="brand">AAA<span>·Admin</span></div>
+              <Nav />
+              <UserMenu email={email} isAdmin={isAdminEmail(email)} />
+            </header>
+          )}
+          <main className="container">{children}</main>
+        </Providers>
       </body>
     </html>
   );

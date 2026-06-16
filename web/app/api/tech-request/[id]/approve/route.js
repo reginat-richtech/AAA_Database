@@ -2,12 +2,17 @@ import { NextResponse } from 'next/server';
 import { query } from '../../../../../lib/db';
 import { scheduleLeaderFor, scheduleDateFor, renderSubmission } from '../../../../../lib/techRequestForm';
 import { calendarCreate, sendEmail } from '../../../../../lib/google';
+import { requireUser } from '../../../../../lib/access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // Manager approval → calendar invite + email notifications → status 'approved'.
+// Approval is a manager action — restricted to admins (ADMIN_EMAILS).
 export async function POST(_request, { params }) {
+  const { user, response } = await requireUser();
+  if (response) return response;
+  if (!user.isAdmin) return NextResponse.json({ error: 'Only a manager can approve.' }, { status: 403 });
   const { id } = await params;
   const sub = (await query(
     `select s.id, s.agreement_type, s.status, s.answers, a.counterparty
@@ -44,7 +49,7 @@ export async function POST(_request, { params }) {
     emails.push({ ...res, role: r.role });
   }
 
-  answers._approval = { approved_by: 'admin', approved_at: new Date().toISOString(), leader };
+  answers._approval = { approved_by: user.email, approved_at: new Date().toISOString(), leader };
   answers._calendar = calendar;
   answers._emails = emails;
   await query(
