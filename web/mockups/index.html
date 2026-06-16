@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AAA Admin — Planned UI Mockup</title>
+<style>
+  /* ── Design tokens (copied from web/app/globals.css so the mockup matches the real app) ── */
+  :root{
+    --bg:#0f172a; --panel:#ffffff; --ink:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --brand:#2563eb; --brand-ink:#1d4ed8;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --chip:#f1f5f9;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:#f8fafc}
+  a{color:var(--brand-ink);text-decoration:none}
+
+  /* ── Top bar ── */
+  .topbar{display:flex;align-items:center;gap:24px;background:var(--bg);color:#fff;padding:0 24px;height:56px}
+  .brand{font-weight:700;letter-spacing:.5px}
+  .brand span{color:#93c5fd;font-weight:500}
+  .topbar nav{display:flex;gap:6px}
+  .topbar nav button{background:transparent;color:#cbd5e1;border:0;font:inherit;padding:6px 12px;border-radius:8px;cursor:pointer}
+  .topbar nav button:hover{color:#fff;background:#1e293b}
+  .topbar nav button.active{color:#fff;background:var(--brand)}
+  .orgsel{margin-left:auto;color:#cbd5e1;font-size:13px;display:flex;align-items:center;gap:8px}
+  .orgsel select{font:inherit;padding:6px 10px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#fff}
+
+  /* ── Mockup ribbon ── */
+  .ribbon{background:#fef3c7;color:#92400e;font-size:12.5px;padding:7px 24px;border-bottom:1px solid #fde68a}
+  .ribbon b{font-weight:700}
+
+  .container{max-width:1180px;margin:0 auto;padding:24px 24px 72px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:16px;margin:28px 0 12px}
+  h3{font-size:14px;margin:18px 0 8px}
+  .sub{color:var(--muted);margin:0 0 20px}
+  .note{color:var(--muted);font-size:13px}
+  .muted{color:var(--muted)}
+
+  /* ── Generic surfaces ── */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:18px}
+  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  input,select,textarea{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  button.btn{font:inherit;font-weight:600;cursor:pointer;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px}
+  button.btn.secondary{background:var(--chip);color:var(--ink)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;white-space:nowrap}
+  tbody tr.click{cursor:pointer}
+  tbody tr.click:hover{background:#f8fafc}
+  .tablewrap{overflow-x:auto}
+
+  .chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--chip);color:var(--muted)}
+  .chip.ok{background:#dcfce7;color:var(--ok)} .chip.warn{background:#fef3c7;color:var(--warn)}
+  .chip.bad{background:#fee2e2;color:var(--bad)} .chip.info{background:#dbeafe;color:var(--brand-ink)}
+
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+  @media (max-width:980px){.split{grid-template-columns:1fr}}
+  .form{display:grid;gap:12px}
+  .form label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+  /* ── Dashboard: KPI cards ── */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media (max-width:860px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .n{font-size:30px;font-weight:700;line-height:1.1}
+  .kpi .l{color:var(--muted);font-size:13px;margin-top:2px}
+  .kpi .d{font-size:12px;font-weight:600;margin-top:8px}
+  .kpi .d.up{color:var(--ok)} .kpi .d.flat{color:var(--muted)} .kpi .d.warnd{color:var(--warn)}
+
+  .grid2{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;align-items:start}
+  @media (max-width:980px){.grid2{grid-template-columns:1fr}}
+
+  /* ── Pipeline funnel ── */
+  .funnel{display:grid;gap:8px}
+  .frow{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;font-size:13px}
+  .frow .fl{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ftrack{background:#f1f5f9;border-radius:6px;height:18px;overflow:hidden}
+  .fbar{height:100%;border-radius:6px}
+  .frow .fc{text-align:right;font-weight:700}
+  .frow.untracked .fl{color:var(--muted)}
+
+  /* ── Activity / attention lists ── */
+  .feed{display:grid;gap:0}
+  .feed .row{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .feed .row:last-child{border-bottom:0}
+  .feed .ic{flex:0 0 auto;width:22px;text-align:center}
+  .feed .t{color:var(--muted);font-size:12px;white-space:nowrap;margin-left:auto}
+  .attn{display:grid;gap:10px}
+  .attn .item{border-left:3px solid var(--line);background:#f8fafc;border-radius:0 8px 8px 0;padding:10px 12px;font-size:13.5px}
+  .attn .item.bad{border-left-color:var(--bad)} .attn .item.warn{border-left-color:var(--warn)} .attn .item.info{border-left-color:var(--brand)}
+  .attn .item .h{font-weight:600}
+
+  /* ── Stage stepper (Project Tracker) ── */
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+  .legend .item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .swatch{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .stepper{display:flex;gap:6px;align-items:center;margin:10px 0;flex-wrap:wrap}
+  .dot{width:15px;height:15px;border-radius:50%;border:2px solid var(--line);background:#fff;flex:0 0 auto}
+  .pcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer}
+  .pcard:hover{border-color:#94a3b8}
+  .pcard .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .tree{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+  .tnode{margin:10px 0}
+  .tnode .h{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px}
+  .tleaf{display:flex;gap:8px;margin:3px 0 3px 24px;font-size:13px}
+  .tleaf .s{width:16px;text-align:center}
+  .tleaf .d{color:var(--muted)}
+
+  .pdfbox{border:1px dashed var(--line);border-radius:10px;height:520px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:repeating-linear-gradient(45deg,#fbfcfe,#fbfcfe 12px,#f5f7fb 12px,#f5f7fb 24px);text-align:center}
+
+  .screen{display:none}
+  .screen.active{display:block}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{font:inherit;border:0;background:#fff;padding:7px 14px;cursor:pointer;color:var(--muted);font-weight:600}
+  .seg button.active{background:var(--brand);color:#fff}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">AAA <span>Admin</span></div>
+    <nav>
+      <button data-screen="dashboard" class="active">Dashboard</button>
+      <button data-screen="data-upload">Data Upload</button>
+      <button data-screen="tech-request">Tech Request</button>
+      <button data-screen="project-tracker">Project Tracker</button>
+    </nav>
+    <div class="orgsel">Org <select><option>Richtech Robotics</option></select></div>
+  </header>
+  <div class="ribbon"><b>UI MOCKUP</b> — static preview of planned layouts. Not wired to data. Sample numbers are illustrative.</div>
+
+  <main class="container">
+
+    <!-- ════════════════════════ DASHBOARD (new / planned) ════════════════════════ -->
+    <section class="screen active" id="dashboard">
+      <h1>Dashboard</h1>
+      <p class="sub">A single landing view: where every deal sits, what needs attention, and recent activity. (New — today <code>/</code> redirects straight to Data Upload.)</p>
+
+      <div class="kpis">
+        <div class="kpi"><div class="n">12</div><div class="l">Agreements uploaded</div><div class="d up">▲ 3 this week</div></div>
+        <div class="kpi"><div class="n">8</div><div class="l">Active projects</div><div class="d flat">— in pipeline</div></div>
+        <div class="kpi"><div class="n">3</div><div class="l">Awaiting approval</div><div class="d warnd">● needs a manager</div></div>
+        <div class="kpi"><div class="n">24</div><div class="l">Robots in active deals</div><div class="d up">▲ 6 this week</div></div>
+      </div>
+
+      <div class="grid2" style="margin-top:18px">
+        <div class="panel">
+          <h3 style="margin-top:0">Pipeline — projects by stage</h3>
+          <div class="funnel" id="funnel"></div>
+          <p class="note" style="margin-top:12px">Solid = tracked stage (auto-advances from form/approval/travel events). Faded = manual stage.</p>
+        </div>
+
+        <div>
+          <div class="panel">
+            <h3 style="margin-top:0">Needs attention</h3>
+            <div class="attn">
+              <div class="item bad"><div class="h">Extraction failed — PRJ-00007</div><span class="note">Scanned PDF, no selectable text. Re-upload a text PDF or enter fields manually.</span></div>
+              <div class="item warn"><div class="h">3 tech requests awaiting manager approval</div><span class="note">Northwind Hotels, Coastal Care, Apex Convention.</span></div>
+              <div class="item info"><div class="h">2 travel requests pending finance</div><span class="note">Bayside Bistro (SO-1042), Northwind (SO-1039).</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3 style="margin-top:0">Recent activity</h3>
+            <div class="feed">
+              <div class="row"><span class="ic">📄</span><span>Agreement <b>PRJ-00012</b> uploaded &amp; extracted</span><span class="t">12m ago</span></div>
+              <div class="row"><span class="ic">✅</span><span>Tech request <b>SO-1039</b> approved → calendar created</span><span class="t">1h ago</span></div>
+              <div class="row"><span class="ic">📤</span><span>Tech request <b>SO-1042</b> pushed to JotForm</span><span class="t">3h ago</span></div>
+              <div class="row"><span class="ic">✈️</span><span>Travel approved for <b>SO-1031</b></span><span class="t">yesterday</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════ DATA UPLOAD ════════════════════════ -->
+    <section class="screen" id="data-upload">
+      <h1>Data Upload</h1>
+      <p class="sub">Upload an agreement PDF → AI extracts the fields → review &amp; edit → save.</p>
+
+      <div class="split">
+        <div>
+          <div class="panel">
+            <form class="form" onsubmit="return false">
+              <label>Agreement PDF<input type="file" /></label>
+              <div class="row2">
+                <label>Salesman name<input value="Maria Lopez" /></label>
+                <label>Salesman email<input value="maria.l@richtechsystem.com" /></label>
+              </div>
+              <label>HubSpot deal ID<input value="DL-88213" /></label>
+              <div><button class="btn">Analyze document</button></div>
+              <p class="ok-msg" style="color:var(--ok);font-size:13px;margin:0">Extracted PRJ-00012. Review and save below.</p>
+            </form>
+          </div>
+
+          <div class="panel">
+            <h2 style="margin-top:0">Review — PRJ-00012 <span class="chip ok">ready</span></h2>
+            <div class="form">
+              <label>Agreement type
+                <select><option>Event Rental Agreement</option><option>RaaS Agreement</option><option>Full Robot Sale</option><option>Other</option></select>
+              </label>
+              <label>Title<input value="Event Robot Rental — Grand Opening Gala" /></label>
+              <label>Counterparty<input value="Bayside Bistro Group" /></label>
+              <div class="row2">
+                <label>Effective date<input type="date" value="2026-07-01" /></label>
+                <label>Expiration date<input type="date" value="2026-07-05" /></label>
+              </div>
+              <div class="row2">
+                <label>Contract value<input type="number" value="18500" /></label>
+                <label>Currency<input value="USD" /></label>
+              </div>
+              <div class="row2">
+                <label>Governing law<input value="Nevada" /></label>
+                <label>Auto-renewal<select><option>No</option><option>Yes</option></select></label>
+              </div>
+              <label>Summary<textarea rows="3">Four-day event rental of ADAM and Matradee L units for a restaurant grand-opening gala, including on-site technician support and teardown.</textarea></label>
+
+              <h3>Robots &amp; equipment</h3>
+              <div class="tablewrap">
+                <table>
+                  <thead><tr><th>Model</th><th>Service</th><th>Qty</th><th>Unit price</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td><input value="ADAM" style="width:160px" /></td><td><select><option>Event</option><option>RaaS</option><option>Full Robot Sale</option></select></td><td><input type="number" value="1" style="width:60px" /></td><td><input type="number" value="9500" style="width:100px" /></td><td><button class="btn secondary">✕</button></td></tr>
+                    <tr><td><input value="Matradee L" style="width:160px" /></td><td><select><option>Event</option><option>RaaS</option><option>Full Robot Sale</option></select></td><td><input type="number" value="2" style="width:60px" /></td><td><input type="number" value="4500" style="width:100px" /></td><td><button class="btn secondary">✕</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div><button class="btn secondary">+ Add robot</button></div>
+              <div style="margin-top:8px"><button class="btn">Save to database</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="panel">
+            <div class="pdfbox">📄 Uploaded PDF preview<br /><span class="note">(rendered inline from object storage)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <h2>Recent uploads</h2>
+      <div class="panel tablewrap">
+        <table>
+          <thead><tr><th>Project</th><th>Title</th><th>Type</th><th>Counterparty</th><th>Status</th><th>Uploaded</th></tr></thead>
+          <tbody>
+            <tr class="click"><td>PRJ-00012</td><td>Event Robot Rental — Grand Opening Gala</td><td>Event Rental</td><td>Bayside Bistro Group</td><td><span class="chip ok">ready</span></td><td>12m ago</td></tr>
+            <tr class="click"><td>PRJ-00011</td><td>RaaS — Lobby Concierge Fleet</td><td>RaaS</td><td>Northwind Hotels</td><td><span class="chip ok">ready</span></td><td>2h ago</td></tr>
+            <tr class="click"><td>PRJ-00010</td><td>RaaS — Patient Delivery Robots</td><td>RaaS</td><td>Coastal Care Centers</td><td><span class="chip ok">ready</span></td><td>1d ago</td></tr>
+            <tr class="click"><td>PRJ-00007</td><td>—</td><td>Other</td><td>—</td><td><span class="chip bad">error</span></td><td>2d ago</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ════════════════════════ TECH REQUEST ════════════════════════ -->
+    <section class="screen" id="tech-request">
+      <h1>Tech Request</h1>
+      <p class="sub">Pick an agreement to start its technician/event request form → submit to JotForm → manager approves → calendar &amp; emails.</p>
+
+      <div class="seg" style="margin-bottom:16px">
+        <button class="active" data-tr="list">1 · Agreement list</button>
+        <button data-tr="form">2 · Request form</button>
+      </div>
+
+      <div id="tr-list">
+        <div class="panel tablewrap">
+          <table>
+            <thead><tr><th>Project</th><th>Counterparty</th><th>Type</th><th>Robots</th><th>Request</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>PRJ-00012</td><td>Bayside Bistro Group</td><td>Event Rental</td><td>ADAM, Matradee L</td><td><span class="chip">none</span></td><td><button class="btn secondary" onclick="trTab('form')">Open form →</button></td></tr>
+              <tr><td>PRJ-00011</td><td>Northwind Hotels</td><td>RaaS</td><td>Titan 300, DUST-E S</td><td><span class="chip info">finalized</span></td><td><button class="btn secondary" onclick="trTab('form')">Review →</button></td></tr>
+              <tr><td>PRJ-00010</td><td>Coastal Care Centers</td><td>RaaS</td><td>Ascend/MedBot</td><td><span class="chip ok">approved</span></td><td><button class="btn secondary" onclick="trTab('form')">Review →</button></td></tr>
+              <tr><td>PRJ-00009</td><td>Apex Convention Center</td><td>Event Rental</td><td>ADAM, Scorpion</td><td><span class="chip warn">saved</span></td><td><button class="btn secondary" onclick="trTab('form')">Review →</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tr-form" style="display:none">
+        <div class="toolbar">
+          <button class="btn secondary" onclick="trTab('list')">← Back to list</button>
+          <span class="chip info">finalized</span>
+          <span class="note">PRJ-00011 · Northwind Hotels · Technician / Event Request</span>
+        </div>
+        <div class="panel"><p class="note" style="margin:0">📤 Submitted to JotForm — awaiting manager approval. <a href="#">View JotForm</a></p></div>
+
+        <div class="panel">
+          <div class="form" style="max-width:680px">
+            <h3 style="margin-top:0">Service details</h3>
+            <label>SO number<input value="SO-1039" /></label>
+            <div class="row2">
+              <label>Service type<select><option>RaaS install</option><option>Event</option></select></label>
+              <label>Site contact<input value="D. Okafor" /></label>
+            </div>
+
+            <h3>Site &amp; logistics</h3>
+            <label>Site address<input value="900 Harbor Blvd, Seattle, WA" /></label>
+            <div class="row2">
+              <label>Loading dock?<select><option>Yes</option><option>No</option></select></label>
+              <label>Elevator access?<select><option>Yes</option><option>No</option></select></label>
+            </div>
+
+            <h3>Schedule</h3>
+            <div class="row2">
+              <label>Install date<input type="date" value="2026-07-14" /></label>
+              <label>Install time<input type="time" value="09:00" /></label>
+            </div>
+
+            <h3>Technicians &amp; robots</h3>
+            <label>Robots on this job
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+                <label class="note" style="display:flex;gap:4px;align-items:center"><input type="checkbox" checked style="width:auto" /> Titan 300</label>
+                <label class="note" style="display:flex;gap:4px;align-items:center"><input type="checkbox" checked style="width:auto" /> DUST-E S</label>
+                <label class="note" style="display:flex;gap:4px;align-items:center"><input type="checkbox" style="width:auto" /> ADAM</label>
+              </div>
+            </label>
+            <label>Technicians<input value="J. Chen, P. Rivera" /></label>
+
+            <div style="display:flex;gap:10px;margin-top:6px">
+              <button class="btn secondary">Save draft</button>
+              <button class="btn">Submit (finalize)</button>
+            </div>
+            <div><button class="btn" style="background:var(--ok)">Approve &amp; schedule (manager)</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════ PROJECT TRACKER ════════════════════════ -->
+    <section class="screen" id="project-tracker">
+      <h1>Project Tracker</h1>
+      <p class="sub">Read-only workflow tree per project. Each agreement advances through 9 stages as its tech request, approval, confirmation, and travel steps complete.</p>
+
+      <div class="legend" id="legend"></div>
+
+      <div class="toolbar">
+        <input placeholder="Search client, salesman, SO#, robot…" style="min-width:320px" />
+        <span class="note">4 project(s)</span>
+      </div>
+
+      <div id="cards"></div>
+    </section>
+  </main>
+
+<script>
+  // ── Stage model (from web/lib/projectStages.js) ──
+  const STAGES=[
+    {key:'proposal',label:'Final Proposal Form',color:'#ef4444',tracked:false,count:14},
+    {key:'agreement',label:'Agreement',color:'#f97316',tracked:true,count:12},
+    {key:'invoice',label:'QuickBooks Invoice',color:'#eab308',tracked:false,count:11},
+    {key:'request',label:'Technician Request Form',color:'#84cc16',tracked:true,count:8},
+    {key:'review',label:'Review & Scheduling',color:'#22c55e',tracked:true,count:6},
+    {key:'prep',label:'Team Preparation',color:'#14b8a6',tracked:true,count:5},
+    {key:'confirmation',label:'Technician Confirmation',color:'#0ea5e9',tracked:true,count:4},
+    {key:'travel',label:'Trip & Travel Requests',color:'#6366f1',tracked:true,count:3},
+    {key:'closure',label:'Installation & Closure',color:'#8b5cf6',tracked:false,count:2},
+  ];
+  const MAX=Math.max(...STAGES.map(s=>s.count));
+
+  // Dashboard funnel
+  document.getElementById('funnel').innerHTML=STAGES.map(s=>`
+    <div class="frow ${s.tracked?'':'untracked'}">
+      <span class="fl">${s.label}</span>
+      <span class="ftrack"><span class="fbar" style="width:${Math.round(s.count/MAX*100)}%;background:${s.color};opacity:${s.tracked?1:.45}"></span></span>
+      <span class="fc">${s.count}</span>
+    </div>`).join('');
+
+  // Tracker legend
+  document.getElementById('legend').innerHTML=STAGES.map(s=>`
+    <span class="item"><span class="swatch" style="background:${s.color};opacity:${s.tracked?1:.45}"></span>${s.label} <b style="color:var(--ink)">${s.count}</b></span>`).join('');
+
+  // ── Sample projects (stage = index reached) ──
+  const PROJECTS=[
+    {pn:'PRJ-00012',cp:'Bayside Bistro Group',type:'Event Rental',robots:'ADAM, Matradee L',so:'SO-1042',stage:7,sales:'Maria Lopez'},
+    {pn:'PRJ-00011',cp:'Northwind Hotels',type:'RaaS',robots:'Titan 300, DUST-E S',so:'SO-1039',stage:6,sales:'James Chen'},
+    {pn:'PRJ-00010',cp:'Coastal Care Centers',type:'RaaS',robots:'Ascend/MedBot',so:'SO-1031',stage:4,sales:'Maria Lopez'},
+    {pn:'PRJ-00009',cp:'Apex Convention Center',type:'Event Rental',robots:'ADAM, Scorpion',so:'',stage:3,sales:'R sales'},
+  ];
+  const LEAF={done:'✓',pending:'○',manual:'·'};
+  function dotStyle(n){
+    if(n.status==='done')return `background:${n.color};border-color:${n.color}`;
+    if(n.status==='current')return `border-color:${n.color};box-shadow:0 0 0 3px ${n.color}33`;
+    if(n.status==='manual')return 'border-style:dashed';
+    return '';
+  }
+  function nodesFor(p){
+    return STAGES.map((s,i)=>({...s,status:!s.tracked?'manual':(i<p.stage?'done':i===p.stage?'current':'pending')}));
+  }
+  // Illustrative tasks for the expanded card (mirrors projectStages.js shape)
+  const TASKS={
+    agreement:[['Agreement PDF uploaded','done'],['AI extraction','done'],['Salesman assigned','done']],
+    request:[['Request form drafted','done'],['Submitted to JotForm','done']],
+    review:[['Manager approval','done'],['Calendar invite created','done'],['Team & sales notified','done']],
+    prep:[['Assign technician','done'],['Prepare & test equipment','manual'],['Robot availability & inventory','manual']],
+    confirmation:[['Confirmation form approved','current'],['Travel dates set','pending'],['Technicians assigned','pending']],
+    travel:[['Manager approval (travel)','pending'],['Navan booking','manual'],['Finance approval','manual']],
+  };
+  document.getElementById('cards').innerHTML=PROJECTS.map((p,idx)=>{
+    const nodes=nodesFor(p); const cur=nodes[p.stage];
+    const stepper=nodes.map(n=>`<span class="dot" title="${n.label} — ${n.status}" style="${dotStyle(n)}"></span>`).join('');
+    const tree=nodes.map(n=>{
+      const ts=(TASKS[n.key]||[]).map(t=>`<div class="tleaf"><span class="s">${LEAF[t[1]]}</span><span>${t[0]}</span></div>`).join('');
+      return `<div class="tnode"><div class="h"><span class="dot" style="${dotStyle(n)}"></span> ${n.label} <span class="note" style="font-weight:400">· ${n.status}</span></div>${ts}</div>`;
+    }).join('');
+    return `<div class="pcard" onclick="this.querySelector('.tree').style.display=this.querySelector('.tree').style.display==='none'?'block':'none'">
+      <div class="top">
+        <div><b>${p.pn}</b> — ${p.cp} <span class="note">· ${p.type} · ${p.robots}</span></div>
+        <span class="chip" style="background:${cur.color}22;color:${cur.color}">${cur.label}</span>
+      </div>
+      <div class="stepper">${stepper}</div>
+      <div class="note">SO ${p.so||'—'} · ${p.sales}${idx<2?' · <a href="#" onclick="event.stopPropagation()">JotForm</a> · <a href="#" onclick="event.stopPropagation()">Calendar</a>':''}</div>
+      <div class="tree" style="display:${idx===1?'block':'none'}" onclick="event.stopPropagation()">${tree}</div>
+    </div>`;
+  }).join('');
+
+  // ── Nav ──
+  const btns=document.querySelectorAll('.topbar nav button');
+  btns.forEach(b=>b.onclick=()=>{
+    btns.forEach(x=>x.classList.remove('active')); b.classList.add('active');
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(b.dataset.screen).classList.add('active');
+    window.scrollTo(0,0);
+  });
+  // Tech-request sub-tabs
+  function trTab(which){
+    document.getElementById('tr-list').style.display=which==='list'?'block':'none';
+    document.getElementById('tr-form').style.display=which==='form'?'block':'none';
+    document.querySelectorAll('[data-tr]').forEach(b=>b.classList.toggle('active',b.dataset.tr===which));
+  }
+  document.querySelectorAll('[data-tr]').forEach(b=>b.onclick=()=>trTab(b.dataset.tr));
+</script>
+</body>
+</html>
