@@ -1,0 +1,2 @@
+# Keeps public/ in git so the Docker image's `COPY ... /app/public` always succeeds.
+# Drop static assets (favicon, images) here as needed.

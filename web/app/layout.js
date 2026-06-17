@@ -1,6 +1,5 @@
 import './globals.css';
-import Nav from './_components/Nav';
-import UserMenu from './_components/UserMenu';
+import Sidebar from './_components/Sidebar';
 import Providers from './_components/Providers';
 import { auth } from '../auth';
 import { isAdminEmail } from '../lib/access';
@@ -18,14 +17,14 @@ export default async function RootLayout({ children }) {
     <html lang="en">
       <body>
         <Providers session={session}>
-          {email && (
-            <header className="topbar">
-              <div className="brand">AAA<span>·Admin</span></div>
-              <Nav />
-              <UserMenu email={email} isAdmin={isAdminEmail(email)} />
-            </header>
+          {email ? (
+            <div className="shell">
+              <Sidebar email={email} isAdmin={isAdminEmail(email)} />
+              <main className="container">{children}</main>
+            </div>
+          ) : (
+            <main className="container">{children}</main>
           )}
-          <main className="container">{children}</main>
         </Providers>
       </body>
     </html>

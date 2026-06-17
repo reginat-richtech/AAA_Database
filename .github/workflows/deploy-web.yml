@@ -1,45 +1,14 @@
-name: Deploy web → Azure App Service
+name: Deploy web → Azure Container Apps
 
-# Builds the Next.js app in web/ and deploys it to Azure App Service (Linux, Node),
-# authenticating with OIDC / federated credentials — no stored passwords to rotate.
-# Runs on every push to main that touches web/, and can be run manually.
+# Builds the Next.js app in web/ into a container image, pushes it to the shared
+# ACR (aiempregistry), and rolls it out to the aaa-web Container App. Auth = OIDC.
 #
 # ── ONE-TIME SETUP ───────────────────────────────────────────────────────────
-# A. Create the App Service:  Linux plan, runtime stack = Node 20 LTS.
-#    Put its name in AZURE_WEBAPP_NAME below.
-#
-# B. Create an Entra app registration (the identity GitHub logs in as):
-#      Azure Portal → Microsoft Entra ID → App registrations → New registration.
-#    Note its Application (client) ID + Directory (tenant) ID + your Subscription ID.
-#
-# C. Let it deploy: App Service (or its resource group) → Access control (IAM) →
-#      Add role assignment → "Website Contributor" → assign to that app registration.
-#
-# D. Add a federated credential (so GitHub logs in WITHOUT a secret):
-#      App registration → Certificates & secrets → Federated credentials → Add →
-#      scenario "GitHub Actions deploying Azure resources":
-#         Organization: reginat-richtech
-#         Repository:   AAA
-#         Entity:       Branch          Branch name: main
-#      → this produces subject:  repo:reginat-richtech/AAA:ref:refs/heads/main
-#    (To also allow manual runs from other branches, add a second credential, or
-#     use the "Environment" entity instead.)
-#
-# E. Add three GitHub repo secrets (Settings → Secrets and variables → Actions):
-#      AZURE_CLIENT_ID        = the app registration's Application (client) ID
-#      AZURE_TENANT_ID        = Directory (tenant) ID
-#      AZURE_SUBSCRIPTION_ID  = your subscription ID
-#
-# F. App Service → Configuration → Application settings — add the runtime env
-#    (the app crashes on boot without the AUTH_* / GOOGLE_* sign-in vars):
-#      DATABASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
-#      AUTH_SECRET, AUTH_URL=https://<your-domain>,
-#      GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ALLOWED_OAUTH_DOMAINS, ADMIN_EMAILS,
-#      (optional) JOTFORM_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON (inline), GOOGLE_IMPERSONATE_SUBJECT,
-#      and  SCM_DO_BUILD_DURING_DEPLOYMENT = false   (we build here, not on Azure).
-#
-# G. App Service → Configuration → General settings → Startup Command:  npm start
-#    (usually auto-detected; set explicitly if the app doesn't start).
+# Run  ./deploy/azure-containerapp.sh  once (after `az login`). It creates the
+# Container Apps environment + the aaa-web app, wires managed-identity pull from
+# aiempregistry, and grants THIS repo's OIDC identity AcrPush + Contributor.
+# The 3 secrets (AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID) are
+# the same ones created earlier — reused as-is.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -51,12 +20,14 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  id-token: write   # required for OIDC login to Azure
-  contents: read    # required for actions/checkout
+  id-token: write   # OIDC login to Azure
+  contents: read
 
 env:
-  AZURE_WEBAPP_NAME: aaa-web   # <-- CHANGE to your App Service name
-  NODE_VERSION: '20'
+  ACR: aiempregistry          # shared registry (reused)
+  IMAGE: aaa-web
+  RG: aaa-rg
+  APP: aaa-web
 
 jobs:
   build-and-deploy:
@@ -65,21 +36,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Build
-        working-directory: web
-        run: npm run build
-
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -87,8 +43,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          package: web
+      - name: Build & push image to ACR
+        run: |
+          set -euo pipefail
+          IMG="${ACR}.azurecr.io/${IMAGE}"
+          az acr login --name "$ACR"
+          docker build -t "$IMG:${{ github.sha }}" -t "$IMG:latest" ./web
+          docker push "$IMG:${{ github.sha }}"
+          docker push "$IMG:latest"
+
+      - name: Roll out to Container App
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --only-show-errors
+          az containerapp update -g "$RG" -n "$APP" \
+            --image "${ACR}.azurecr.io/${IMAGE}:${{ github.sha }}"

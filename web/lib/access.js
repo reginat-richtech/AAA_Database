@@ -28,6 +28,15 @@ export async function requireUser() {
   return { user };
 }
 
+// Guard for admin-only routes (the AI intelligence tabs show company-wide CRM /
+// finance / travel data, so they are restricted to ADMIN_EMAILS).
+export async function requireAdmin() {
+  const user = await currentUser();
+  if (!user) return { response: NextResponse.json({ error: 'Not signed in.' }, { status: 401 }) };
+  if (!user.isAdmin) return { response: NextResponse.json({ error: 'Admins only.' }, { status: 403 }) };
+  return { user };
+}
+
 // SQL predicate restricting ops.legal_agreement rows to those `user` may see.
 // Admins → "true". Others → salesman_email or uploaded_by equals their email.
 // `startIndex` is the $N placeholder for the email param; `alias` optionally
