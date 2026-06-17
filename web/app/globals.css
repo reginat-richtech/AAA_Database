@@ -171,6 +171,9 @@ button:hover { background:#1842b8; }
 button.secondary { background:var(--chip); color:var(--ink); border:1px solid var(--line); }
 button.secondary:hover { background:#e2ecf9; }
 button:disabled { opacity:.55; cursor:default; }
+/* a Next <Link> styled as a primary button */
+.btnlink { display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:13px; background:var(--primary); color:#fff; border-radius:8px; padding:8px 14px; }
+.btnlink:hover { background:#1842b8; text-decoration:none; }
 
 /* ---- Chips ---------------------------------------------------------------- */
 .chip { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; background:var(--chip); color:var(--muted); font-family:var(--font-mono); }
@@ -363,3 +366,31 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .task-row:hover { background:var(--chip); text-decoration:none; }
 .task-title { font-weight:600; font-size:13.5px; }
 .task-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
+/* ---- Travel AI: expense review panel -------------------------------------- */
+.seg { display:inline-flex; gap:4px; background:var(--chip); border:1px solid var(--line); border-radius:8px; padding:3px; margin-bottom:10px; }
+.seg button { background:transparent; color:var(--muted); border:0; padding:5px 12px; border-radius:6px; font-size:13px; font-weight:600; }
+.seg button.on { background:var(--primary); color:#fff; }
+.flag-head { color:var(--bad); font-weight:700; font-size:13.5px; margin:16px 0 8px; border-top:1px dashed var(--line); padding-top:12px; }
+.flag-head .note { font-weight:400; }
+.travelers { display:flex; flex-direction:column; }
+.trow { display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px dashed var(--line); }
+.trow:last-child { border-bottom:0; }
+.tname { font-weight:600; font-size:13.5px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tflags { display:flex; gap:6px; flex:0 0 auto; }
+.tflag { font-family:var(--font-mono); font-size:11px; background:var(--chip); border:1px solid var(--line); border-radius:6px; padding:1px 6px; color:var(--muted); white-space:nowrap; }
+.tflag.bad { background:#fee2e2; border-color:#fecaca; color:#b91c1c; }
+.tamt { font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--primary); min-width:74px; text-align:right; }
+
+/* ---- HubSpot AI: activity cards ------------------------------------------- */
+.cards-list { display:flex; flex-direction:column; gap:8px; }
+.act-card { display:flex; gap:10px; background:var(--chip); border:1px solid var(--line); border-left-width:3px; border-radius:8px; padding:9px 12px; }
+.act-card.sev-fail { border-left-color:var(--bad); }
+.act-card.sev-warn { border-left-color:var(--warn); }
+.act-card.sev-info { border-left-color:var(--info); }
+.act-card.sev-ok   { border-left-color:var(--ok); }
+.act-ic { font-size:16px; line-height:1.45; flex:0 0 auto; }
+.act-bd { min-width:0; }
+.act-title { font-weight:600; font-size:13.5px; }
+.act-msg { color:var(--muted); font-size:12.5px; margin-top:2px; }
+.act-rec { color:var(--primary); font-size:12px; margin-top:3px; }

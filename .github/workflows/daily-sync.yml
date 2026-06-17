@@ -1,0 +1,26 @@
+name: Daily data sync
+
+# Pulls the full Navan + JotForm (+ QuickBooks when connected) datasets into the
+# cloud Postgres by calling the deployed app's admin sync endpoint.
+#
+# Requires two repo secrets (Settings → Secrets and variables → Actions):
+#   APP_URL           e.g. https://aaa-web.<...>.azurecontainerapps.io   (no trailing slash needed)
+#   SYNC_CRON_SECRET  must equal the SYNC_CRON_SECRET env var on the deployed app
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 09:00 UTC daily
+  workflow_dispatch: {}   # allow manual run from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger full data sync
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          SYNC_CRON_SECRET: ${{ secrets.SYNC_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST "${APP_URL%/}/api/admin/sync?source=all" \
+            -H "Authorization: Bearer ${SYNC_CRON_SECRET}" \
+            --max-time 290 | tee result.json

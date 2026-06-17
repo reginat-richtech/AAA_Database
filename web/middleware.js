@@ -8,8 +8,9 @@ export default auth((req) => {
   const { pathname, search, origin } = req.nextUrl;
 
   const isPublic =
-    pathname.startsWith('/api/auth') ||      // Auth.js sign-in/callback/session
-    pathname.startsWith('/api/webhooks') ||  // external JotForm stage callbacks
+    pathname.startsWith('/api/auth') ||        // Auth.js sign-in/callback/session
+    pathname.startsWith('/api/webhooks') ||    // external JotForm stage callbacks
+    pathname.startsWith('/api/admin/sync') ||  // dual-auth (admin session OR cron secret) — enforced in the route
     pathname === '/signin';
   if (isPublic) return NextResponse.next();
 

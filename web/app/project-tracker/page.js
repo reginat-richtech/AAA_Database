@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader, StageRail, ProjectRail, STAGES, STAGE_RAMP, hexA } from '../_components/blueprint';
 
 const LEAF_ICON = { done: '✓', pending: '○', manual: '·' };
@@ -40,9 +41,10 @@ export default function ProjectTracker() {
       <div className="toolbar">
         <input placeholder="Search client, salesman, SO#, robot…" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 320 }} />
         <span className="note">{projects.length} project(s)</span>
+        <Link href="/data-upload" className="btnlink" style={{ marginLeft: 'auto' }}>+ Upload agreement</Link>
       </div>
 
-      {projects.length === 0 && <p className="note">No projects yet — upload an agreement in Data Upload.</p>}
+      {projects.length === 0 && <p className="note">No projects yet — upload an agreement in <Link href="/data-upload">Data Upload</Link>.</p>}
 
       {projects.map((p) => {
         const curColor = STAGE_RAMP[p.stage];

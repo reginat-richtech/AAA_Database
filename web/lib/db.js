@@ -13,7 +13,7 @@ export async function query(text, params) {
 
 // Schemas this admin tool is allowed to read in the DB browser.
 export const BROWSABLE_SCHEMAS = [
-  'core', 'crm', 'hr', 'inventory', 'invoicing', 'legal', 'workflow', 'audit',
+  'core', 'crm', 'hr', 'inventory', 'invoicing', 'legal', 'ops', 'workflow', 'privacy', 'audit',
 ];
 
 // Confirm a schema.table really exists (guards the DB-browser against
