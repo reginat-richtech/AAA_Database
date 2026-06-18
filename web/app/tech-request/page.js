@@ -48,15 +48,8 @@ export default function TechRequest() {
     } else setMsg({ ok: 'Draft saved.' });
     openForm(form.agreement_id); loadList();
   }
-  async function approve() {
-    setBusy(true); setMsg(null);
-    const r = await fetch(`/api/tech-request/${form.submission.id}/approve`, { method: 'POST' });
-    const j = await r.json(); setBusy(false);
-    if (!r.ok) { setMsg({ err: j.error }); return; }
-    const cal = j.calendar || {}; const sent = (j.emails || []).filter((e) => e.sent).length;
-    setMsg({ ok: `Approved → leader ${j.leader}. Calendar: ${cal.html_link ? 'created' : (cal.skipped || cal.error || 'n/a')}. Emails sent: ${sent}.` });
-    openForm(form.agreement_id); loadList();
-  }
+  // Manager approval + calendar/email scheduling are handled in JotForm, not on
+  // the website. The site's job ends at "Submit (finalize)" → pushed to JotForm.
 
   function field(fl) {
     const v = vals[fl.key];
@@ -132,9 +125,7 @@ export default function TechRequest() {
               <button onClick={() => submit(true)} disabled={busy}>{busy ? 'Working…' : 'Submit (finalize)'}</button>
             </div>
           )}
-          {form.can_approve && (
-            <div><button onClick={approve} disabled={busy}>{busy ? 'Approving…' : 'Approve & schedule (manager)'}</button></div>
-          )}
+          {/* Approval & scheduling happen in JotForm, not here. */}
         </div>
       </div>
     </>
