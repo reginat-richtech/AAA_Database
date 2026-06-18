@@ -36,19 +36,24 @@ export async function GET() {
   const confBySo = {};
   for (const c of confs) { const k = normSo(c.so_number); if (!(k in confBySo)) confBySo[k] = c; }
 
-  // Travel-approved SO numbers from stage webhooks (stage starting with "travel").
-  const ev = (await query("select submission_id, payload from ops.jotform_stage_event where stage like 'travel%'")).rows;
+  // Stage-webhook events: travel approvals (matched by SO number) and manager
+  // approvals (matched by the JotForm submission id we stored when finalizing).
+  const ev = (await query('select submission_id, stage, payload from ops.jotform_stage_event')).rows;
   const travel = new Set();
+  const approvedSubIds = new Set();
   for (const e of ev) {
-    const so = e.payload?.so_number || e.payload?.so || e.submission_id;
-    if (so) travel.add(normSo(so));
+    if (String(e.stage || '').startsWith('travel')) {
+      const so = e.payload?.so_number || e.payload?.so || e.submission_id;
+      if (so) travel.add(normSo(so));
+    }
+    if (e.stage === 'approved' && e.submission_id) approvedSubIds.add(String(e.submission_id));
   }
 
   const projects = agreements.map((a) => {
     const sub = subByAg[a.id] || null;
     const so = sub?.answers?.so_number;
     const conf = so ? confBySo[normSo(so)] : null;
-    return buildProject(a, sub, conf, travel);
+    return buildProject(a, sub, conf, travel, approvedSubIds);
   });
 
   const counts = {};

@@ -26,7 +26,7 @@ const task = (label, done, detail, url) => ({
   detail: detail || null, url: url || null,
 });
 
-export function buildProject(a, submission, confirmation, travelApprovedSet) {
+export function buildProject(a, submission, confirmation, travelApprovedSet, approvedSubmissionIds = new Set()) {
   const ann = (submission && submission.answers) || {};
   const appr = ann._approval || null;
   const cal = ann._calendar || null;
@@ -36,10 +36,17 @@ export function buildProject(a, submission, confirmation, travelApprovedSet) {
   const confPayload = (conf && conf.payload) || {};
   const so = ann.so_number || '';
 
+  // Manager approval is satisfied by the in-app "Approve & schedule" (status=approved)
+  // OR a JotForm workflow approval — a jotform_stage_event(stage='approved') whose
+  // submission_id matches the one we pushed to JotForm when the form was finalized.
+  const jfSubId = jf?.submission_id || jf?.submissionID || null;
+  const jotformApproved = !!(jfSubId && approvedSubmissionIds.has(String(jfSubId)));
+  const managerApproved = submission?.status === 'approved' || jotformApproved;
+
   const done = {
     agreement: true,
     request: ['finalized', 'approved'].includes(submission?.status),
-    review: submission?.status === 'approved',
+    review: managerApproved,
     prep: !!conf,
     confirmation: !!conf,
     travel: travelApprovedSet.has(normSo(so)) || (!!conf && emailsSent > 0),
@@ -69,7 +76,7 @@ export function buildProject(a, submission, confirmation, travelApprovedSet) {
         ];
       case 'review':
         return [
-          task('Manager approval', submission?.status === 'approved', appr ? `by ${appr.approved_by} · ${(appr.approved_at || '').slice(0, 10)}` : null),
+          task('Manager approval', managerApproved, appr ? `by ${appr.approved_by} · ${(appr.approved_at || '').slice(0, 10)}` : (jotformApproved ? 'Approved in JotForm' : null)),
           task('Calendar invite created', !!cal?.html_link, cal?.date, cal?.html_link),
           task('Team & sales notified', emailsSent > 0, emailsSent ? `${emailsSent} email(s) sent` : null),
         ];
