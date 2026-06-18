@@ -12,6 +12,12 @@ export default function TechRequest() {
   const [msg, setMsg] = useState(null);
 
   useEffect(() => { loadList(); }, []);
+  // Auto-open a specific agreement's form when linked from the Project Tracker
+  // (e.g. /tech-request?agreement=<id>).
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('agreement');
+    if (id) openForm(id);
+  }, []);
   function loadList() {
     fetch('/api/tech-request/agreements').then((r) => r.json()).then((d) => setList(d.agreements || [])).catch(() => {});
   }

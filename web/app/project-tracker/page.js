@@ -80,13 +80,11 @@ export default function ProjectTracker() {
               {p.salesman_name && <span>👤 {p.salesman_name}</span>}
               {p.so_number && <span>SO {p.so_number}</span>}
               {p.created_at && <span>📅 {new Date(p.created_at).toLocaleDateString()}</span>}
-              {(p.jotform_url || p.calendar_link) && (
-                <span className="pc-link" onClick={(e) => e.stopPropagation()}>
-                  {p.jotform_url && <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm ↗</a>}
-                  {p.jotform_url && p.calendar_link && ' · '}
-                  {p.calendar_link && <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar ↗</a>}
-                </span>
-              )}
+              <span className="pc-link" onClick={(e) => e.stopPropagation()}>
+                <Link href={`/tech-request?agreement=${p.id}`}>Tech Request ↗</Link>
+                {p.jotform_url && <> · <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm ↗</a></>}
+                {p.calendar_link && <> · <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar ↗</a></>}
+              </span>
             </div>
 
             <ProjectRail nodes={p.nodes} />

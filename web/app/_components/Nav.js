@@ -6,8 +6,9 @@ import { prefetchAi } from '../../lib/aiCache';
 
 const WORKFLOW = [
   { href: '/project-tracker', label: 'Project Tracker', icon: 'list' },
-  { href: '/data-upload', label: 'Data Upload', icon: 'upload' },
-  { href: '/tech-request', label: 'Tech Request', icon: 'tool' },
+  // Data Upload and Tech Request are intentionally hidden from the nav — their
+  // pages still work: /data-upload directly, and /tech-request is opened per
+  // project from the Project Tracker ("Tech Request ↗").
 ];
 // AI intelligence tabs — admin-only (company-wide CRM / finance / travel data).
 const AI = [
