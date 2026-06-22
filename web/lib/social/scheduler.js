@@ -15,7 +15,7 @@ export function startSocialScheduler() {
     running = true;
     try {
       const r = await publishDuePosts();
-      if (r.length) console.log(`[social-scheduler] processed ${r.length} due post(s):`, r.map((x) => `${x.platform}:${x.ok ? 'ok' : 'fail'}`).join(', '));
+      if (r.length) console.log(`[social-scheduler] processed ${r.length} due post(s):`, r.map((x) => `${x.platform}:${x.ok ? 'ok' : `FAIL(${x.error || '?'})`}`).join(' | '));
     } catch (e) {
       console.error('[social-scheduler] error:', e?.message || e);
     } finally {
@@ -23,6 +23,6 @@ export function startSocialScheduler() {
     }
   };
   setTimeout(tick, 5_000);     // first check shortly after startup
-  setInterval(tick, 60_000);   // then every 60s
-  console.log('[social-scheduler] started — first check in ~5s, then every 60s');
+  setInterval(tick, 15_000);   // then every 15s — bounds lateness to ~15s
+  console.log('[social-scheduler] started — first check in ~5s, then every 15s');
 }
