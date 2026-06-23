@@ -6,10 +6,13 @@ name: Social scheduler
 # Uses the same two repo secrets as the daily sync:
 #   APP_URL           e.g. https://aaa-web.<...>.azurecontainerapps.io
 #   SYNC_CRON_SECRET  must equal the SYNC_CRON_SECRET env var on the deployed app
+# Scheduled cron DISABLED: the app's in-app scheduler (instrumentation.js with
+# SOCIAL_AUTOPUBLISH=1) already auto-publishes on Azure, so this 15-min cron is
+# redundant and was failing on empty APP_URL / SYNC_CRON_SECRET repo secrets.
+# To re-enable it as a backup: set those two repo secrets, then restore a
+# `schedule:` block here (e.g. `- cron: '*/15 * * * *'`).
 on:
-  schedule:
-    - cron: '*/15 * * * *'   # every 15 minutes (GitHub cron min granularity ~5 min, often delayed)
-  workflow_dispatch: {}      # allow manual run from the Actions tab
+  workflow_dispatch: {}      # manual run only (Actions tab) — no automatic schedule
 
 jobs:
   publish-due:
