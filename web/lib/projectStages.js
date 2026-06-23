@@ -16,6 +16,18 @@ export const PROJECT_STAGES = [
   { key: 'finance', label: 'Finance Review & Reconciliation', color: '#ec4899', tracked: false },
 ];
 
+// True once a project has reached the Team Preparation step — i.e. its Tech
+// Department Review & Approve step is complete (approved in-app or via JotForm).
+// `submission` is the project's best tech-request submission. Gates which
+// projects appear in Task Tracking and accept task assignment.
+export function reachedTeamPrep(submission, approvedSubmissionIds = new Set()) {
+  if (!submission) return false;
+  if (submission.status === 'approved') return true;
+  const jf = submission.answers?._jotform || null;
+  const jfSubId = jf?.submission_id || jf?.submissionID || null;
+  return !!(jfSubId && approvedSubmissionIds.has(String(jfSubId)));
+}
+
 // Normalize an SO number for cross-table matching: "SO-1234" == "so 1234" == "1234".
 export function normSo(v) {
   return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^SO/, '');

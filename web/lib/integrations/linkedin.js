@@ -11,6 +11,7 @@ const CSEC = process.env.LINKEDIN_CLIENT_SECRET || '';
 const ORG_ID_ENV = process.env.LINKEDIN_ORG_ID || '';               // optional: skip auto-discovery
 const API_VERSION = process.env.LINKEDIN_API_VERSION || '202405';   // LinkedIn-Version header (YYYYMM)
 const SCOPES = process.env.LINKEDIN_SCOPES || 'w_organization_social r_organization_social rw_organization_admin';
+const DRY_RUN = process.env.LINKEDIN_DRY_RUN === '1';                // simulate publishing — never calls LinkedIn
 const AUTHORIZE_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 const TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
 const REST = 'https://api.linkedin.com/rest';
@@ -138,18 +139,29 @@ export function orgUrn(cred) {
 }
 
 // Publish a text post to the organization. Returns the created share URN.
-export async function publishPost({ token, authorUrn, commentary, visibility = 'PUBLIC' }) {
+// draft:true creates it in DRAFT state — it lives in the Page admin's Drafts and
+// is NOT distributed to followers (used for safe testing; delete with deleteLinkedinPost).
+export async function publishPost({ token, authorUrn, commentary, visibility = 'PUBLIC', draft = false }) {
   const body = {
     author: authorUrn,
     commentary,
     visibility,
     distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-    lifecycleState: 'PUBLISHED',
+    lifecycleState: draft ? 'DRAFT' : 'PUBLISHED',
     isReshareDisabledByAuthor: false,
   };
   const r = await api('/posts', { method: 'POST', token, body });
   const postUrn = r.headers.get('x-restli-id') || r.headers.get('x-linkedin-id') || r.json?.id || '';
   return { ok: r.ok, status: r.status, postUrn, error: r.ok ? null : JSON.stringify(r.json).slice(0, 400) };
+}
+
+// Delete a post/draft by URN (cleanup after a draft test). Returns { ok }.
+export async function deleteLinkedinPost(urn) {
+  let token;
+  try { token = await getValidAccessToken(); } catch (e) { return { ok: false, error: String(e?.message || e) }; }
+  if (!token) return { ok: false, error: 'LinkedIn not connected' };
+  const r = await api(`/posts/${encodeURIComponent(urn)}`, { method: 'DELETE', token });
+  return { ok: r.ok, status: r.status, error: r.ok ? null : JSON.stringify(r.json).slice(0, 400) };
 }
 
 // Read comments on a published post (share/ugcPost URN).
@@ -170,17 +182,19 @@ export async function listComments({ token, postUrn }) {
 // publishToX / publishToFacebook signature used by the /social action route:
 // returns { ok, id } (id = the created share URN, stored in social_post.x_post_id)
 // or { ok:false, skipped|error } so the workflow records the failure cleanly.
-export async function publishToLinkedin(post) {
+export async function publishToLinkedin(post, { draft = false, dryRun = DRY_RUN } = {}) {
+  if (!String(post.content || '').trim()) return { ok: false, error: 'LinkedIn post needs text' };
+  // Dry-run: validate then simulate — never touches LinkedIn (safe before API approval).
+  if (dryRun) return { ok: true, id: `urn:li:share:DRYRUN-${post.id || 'test'}`, dryRun: true };
   const cred = await getLinkedinCredential();
   if (!cred) return { ok: false, skipped: 'LinkedIn not connected' };
   const author = orgUrn(cred);
   if (!author) return { ok: false, skipped: 'No LinkedIn organization (reconnect, or set LINKEDIN_ORG_ID)' };
-  if (!String(post.content || '').trim()) return { ok: false, error: 'LinkedIn post needs text' };
   let token;
   try { token = await getValidAccessToken(); } catch (e) { return { ok: false, error: String(e?.message || e) }; }
   if (!token) return { ok: false, skipped: 'No LinkedIn access token' };
-  const r = await publishPost({ token, authorUrn: author, commentary: post.content, visibility: 'PUBLIC' });
-  if (r.ok) return { ok: true, id: r.postUrn };
+  const r = await publishPost({ token, authorUrn: author, commentary: post.content, visibility: 'PUBLIC', draft });
+  if (r.ok) return { ok: true, id: r.postUrn, draft: draft || undefined };
   return { ok: false, error: r.error || `HTTP ${r.status}` };
 }
 

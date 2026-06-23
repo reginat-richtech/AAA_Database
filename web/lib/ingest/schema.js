@@ -113,13 +113,17 @@ export async function ensureExtSchema() {
 
     create table if not exists ext.app_user (
       email      text primary key,
-      role       text not null default 'user',   -- 'admin' | 'user'
+      role       text not null default 'user',   -- 'admin' | 'user' (system access)
       name       text,
       added_by   text,
+      department text,                            -- sales|legal|marketing|finance|tech|inventory
+      title      text not null default 'member',  -- 'member' | 'manager' (org level for tasks)
       last_seen  timestamptz,
       updated_at timestamptz not null default now()
     );
     alter table ext.app_user add column if not exists last_seen timestamptz;
+    alter table ext.app_user add column if not exists department text;
+    alter table ext.app_user add column if not exists title text not null default 'member';
 
     create table if not exists ext.social_post (
       id             text primary key,
@@ -151,6 +155,38 @@ export async function ensureExtSchema() {
       created_at   timestamptz not null default now()
     );
     create index if not exists social_media_post_idx on ext.social_media (post_id, created_at);
+
+    create table if not exists ext.task (
+      id             text primary key,
+      project_id     text not null,                  -- ops.legal_agreement.id (as text)
+      title          text not null,
+      description    text,
+      department     text not null,                  -- owning department
+      assignee_email text,
+      created_by     text,
+      status         text not null default 'todo',   -- todo | in_progress | blocked | done
+      priority       text not null default 'normal', -- low | normal | high
+      auto_key       text,                            -- set for auto-seeded prep tasks: equipment|customer_comm|shipping
+      due_date       date,
+      created_at     timestamptz not null default now(),
+      updated_at     timestamptz not null default now()
+    );
+    alter table ext.task add column if not exists auto_key text;
+    create index if not exists task_dept_idx     on ext.task (department, status);
+    create index if not exists task_project_idx  on ext.task (project_id);
+    create index if not exists task_assignee_idx on ext.task (assignee_email);
+    -- one auto-seeded task per (project, auto_key); manual tasks keep auto_key NULL (NULLs are distinct).
+    create unique index if not exists task_auto_uidx on ext.task (project_id, auto_key);
+
+    create table if not exists ext.task_project (
+      project_id   text primary key,                -- ops.legal_agreement.id (as text)
+      status       text not null default 'active',  -- 'active' | 'complete'
+      completed_by text,
+      completed_at timestamptz,
+      seeded_at    timestamptz,                      -- when the 3 prep tasks were auto-created (once)
+      updated_at   timestamptz not null default now()
+    );
+    alter table ext.task_project add column if not exists seeded_at timestamptz;
 
     create table if not exists ext.sync_log (
       id          bigserial primary key,

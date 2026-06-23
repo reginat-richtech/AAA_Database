@@ -33,11 +33,17 @@ export async function isAdmin(email) {
 }
 
 // Resolve the signed-in user for a route. Returns null when unauthenticated.
+// Includes the org fields (department + title) used by Task Tracking.
 export async function currentUser() {
   const session = await auth();
   const email = session?.user?.email?.toLowerCase();
   if (!email) return null;
-  return { email, name: session.user.name || email, isAdmin: await isAdmin(email) };
+  let department = null, title = 'member';
+  try {
+    const { rows } = await query('select department, title from ext.app_user where lower(email) = lower($1)', [email]);
+    if (rows[0]) { department = rows[0].department || null; title = rows[0].title || 'member'; }
+  } catch { /* table not created yet */ }
+  return { email, name: session.user.name || email, isAdmin: await isAdmin(email), department, title };
 }
 
 // Record a signed-in user (refreshing last_seen) so admins can see everyone on
