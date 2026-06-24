@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { PageHeader } from '../../_components/blueprint';
+import { isValidSku, normalizeSku, SKU_HINT } from '../../../lib/inventory';
 
 const OFFER_LABEL = { finished_goods: 'Finished Goods', raas: 'RaaS', event_rental: 'Event Rental' };
 const OFFER_ORDER = ['finished_goods', 'raas', 'event_rental'];
@@ -90,6 +91,13 @@ export default function InventoryDetail() {
   const canEdit = data.canEdit;
   const cols = 8;
 
+  // Add-item form validation — every field is required, and the SKU must match
+  // the SOURCE-CATEGORY-CODE format.
+  const af = addForm || {};
+  const skuValid = isValidSku(af.sku);
+  const qtyValid = af.quantity !== '' && af.quantity != null && Number.isFinite(Number(af.quantity)) && Number(af.quantity) >= 0;
+  const addValid = !!(af.product_name?.trim() && skuValid && qtyValid && af.location?.trim());
+
   return (
     <>
       <PageHeader title="Inventory detail" sub={`Full stock list${data.period ? ` · ${data.period}` : ''}. 0-quantity items hidden by default. Search by product, SKU, location, or category.`} sheet="Inventory" />
@@ -170,14 +178,26 @@ export default function InventoryDetail() {
         <div className="inv-overlay" onClick={() => setAddForm(null)}>
           <div className="inv-modal" onClick={(e) => e.stopPropagation()}>
             <div className="inv-mhead"><b>Add inventory item</b><button className="secondary" onClick={() => setAddForm(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
-            <label className="inv-f">Product name<input value={addForm.product_name} onChange={(e) => setAddForm({ ...addForm, product_name: e.target.value })} placeholder="e.g. ADAM 7-core control cable" /></label>
-            <label className="inv-f">SKU<input value={addForm.sku} onChange={(e) => setAddForm({ ...addForm, sku: e.target.value })} placeholder="e.g. SE-ADAM-XXXX (class & line auto-derive)" /></label>
+            <p className="note" style={{ margin: '0 0 2px' }}>All fields are required.</p>
+            <label className="inv-f">Product name <span className="inv-req">*</span><input value={addForm.product_name} onChange={(e) => setAddForm({ ...addForm, product_name: e.target.value })} placeholder="e.g. ADAM 7-core control cable" /></label>
+            <label className="inv-f">SKU <span className="inv-req">*</span>
+              <input
+                value={addForm.sku}
+                onChange={(e) => setAddForm({ ...addForm, sku: normalizeSku(e.target.value) })}
+                placeholder="e.g. SE-ADAM-EC2X"
+                aria-invalid={addForm.sku && !skuValid ? 'true' : 'false'}
+                className={addForm.sku && !skuValid ? 'inv-bad' : ''}
+              />
+            </label>
+            <p className={'note' + (addForm.sku && !skuValid ? ' inv-errtext' : '')} style={{ margin: '2px 0 0' }}>
+              {addForm.sku && !skuValid ? `Doesn’t match — ${SKU_HINT}` : `${SKU_HINT} · category & line auto-derive`}
+            </p>
             <div className="inv-frow">
-              <label className="inv-f">Quantity<input type="number" value={addForm.quantity} onChange={(e) => setAddForm({ ...addForm, quantity: e.target.value })} /></label>
-              <label className="inv-f">Location<input value={addForm.location} onChange={(e) => setAddForm({ ...addForm, location: e.target.value })} placeholder="e.g. Warehouse" /></label>
+              <label className="inv-f">Quantity <span className="inv-req">*</span><input type="number" min="0" value={addForm.quantity} onChange={(e) => setAddForm({ ...addForm, quantity: e.target.value })} placeholder="0" /></label>
+              <label className="inv-f">Location <span className="inv-req">*</span><input value={addForm.location} onChange={(e) => setAddForm({ ...addForm, location: e.target.value })} placeholder="e.g. Warehouse A" /></label>
             </div>
             <div className="inv-actions">
-              <button onClick={addItem} disabled={busy || (!addForm.product_name.trim() && !addForm.sku.trim())}>Add item</button>
+              <button onClick={addItem} disabled={busy || !addValid}>Add item</button>
               <button className="secondary" onClick={() => setAddForm(null)}>Cancel</button>
             </div>
           </div>
@@ -242,6 +262,9 @@ export default function InventoryDetail() {
         .inv-f input, .inv-f select { width:100%; }
         .inv-frow { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         .inv-actions { display:flex; gap:8px; margin-top:18px; }
+        .inv-req { color:var(--bad,#dc2626); font-weight:700; }
+        .inv-errtext { color:var(--bad,#dc2626); }
+        .inv-bad { border-color:var(--bad,#dc2626) !important; }
       `}</style>
     </>
   );

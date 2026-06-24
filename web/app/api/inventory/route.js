@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/access';
 import { query } from '../../../lib/db';
+import { isValidSku, normalizeSku } from '../../../lib/inventory';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -89,12 +90,17 @@ export async function POST(req) {
     return NextResponse.json({ error: 'Only admins or the inventory team can add items.' }, { status: 403 });
   }
   const b = await req.json().catch(() => ({}));
+  // Every field is required.
   const product_name = String(b.product_name || '').trim().slice(0, 300);
-  const sku = b.sku ? String(b.sku).trim().slice(0, 100) : null;
-  if (!product_name && !sku) return NextResponse.json({ error: 'A product name or SKU is required.' }, { status: 400 });
+  const sku = normalizeSku(b.sku).slice(0, 100);
+  const location = String(b.location || '').trim().slice(0, 300);
   const qn = Number(String(b.quantity ?? '').trim());
-  const quantity = Number.isFinite(qn) ? qn : null;
-  const location = b.location ? String(b.location).slice(0, 300) : null;
+  if (!product_name) return NextResponse.json({ error: 'Product name is required.' }, { status: 400 });
+  if (!sku) return NextResponse.json({ error: 'SKU is required.' }, { status: 400 });
+  if (!isValidSku(sku)) return NextResponse.json({ error: 'SKU must look like SE-ADAM-EC2X (SOURCE-CATEGORY-CODE).' }, { status: 400 });
+  if (!Number.isFinite(qn) || qn < 0) return NextResponse.json({ error: 'Quantity is required (0 or more).' }, { status: 400 });
+  if (!location) return NextResponse.json({ error: 'Location is required.' }, { status: 400 });
+  const quantity = qn;
 
   // Default to the most recent count period so it shows with current stock.
   const periodRow = (await query(`select count_period from inventory.cn_sku order by count_period desc limit 1`)).rows[0];
