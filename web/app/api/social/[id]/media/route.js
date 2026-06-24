@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../../../lib/access';
-import { query } from '../../../../../lib/db';
+import { query, mutateAs } from '../../../../../lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,10 +38,10 @@ export async function POST(req, { params }) {
     if (f.size > limit) return NextResponse.json({ error: `${f.name || 'file'} is too large — max ${Math.round(limit / 1048576)}MB for ${kind}` }, { status: 413 });
     const buf = Buffer.from(await f.arrayBuffer());
     const mid = crypto.randomUUID();
-    await query(
+    await mutateAs(user.email, (q) => q(
       `insert into ext.social_media (id, post_id, kind, content_type, filename, bytes, size) values ($1,$2,$3,$4,$5,$6,$7)`,
       [mid, id, kind, ct, f.name || null, buf, buf.length],
-    );
+    ));
     out.push({ id: mid, kind, content_type: ct, filename: f.name || null });
   }
   return NextResponse.json({ ok: true, media: out });

@@ -7,17 +7,19 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // The app's audited tables, by the bare name stored in audit.activity_log.table_name.
-const APP_TABLES = ['task', 'task_update', 'task_project', 'social_post', 'project_allocation', 'legal_agreement', 'tech_request_submission'];
+const APP_TABLES = ['task', 'task_update', 'task_project', 'pm_task', 'pm_sheet', 'pm_workspace', 'pm_workspace_member', 'social_post', 'social_media', 'cn_sku', 'project_allocation', 'legal_agreement', 'tech_request_submission'];
 const LABELS = {
   task: 'Task', task_update: 'Task update', task_project: 'Project board',
-  social_post: 'Social post', project_allocation: 'Inventory allocation',
+  pm_task: 'Task', pm_sheet: 'Board', pm_workspace: 'Workspace', pm_workspace_member: 'Workspace member',
+  social_post: 'Social post', social_media: 'Post attachment',
+  cn_sku: 'Inventory item', project_allocation: 'Inventory allocation',
   legal_agreement: 'Project / agreement', tech_request_submission: 'Tech request',
 };
 // Bookkeeping columns we don't surface as user-meaningful "changes".
-const SKIP = new Set(['updated_at', 'synced_at', 'created_at', 'row_hash', 'prev_hash', 'last_seen']);
+const SKIP = new Set(['updated_at', 'synced_at', 'created_at', 'row_hash', 'prev_hash', 'last_seen', 'raw', 'bytes', 'size']);
 const labelOf = (d) => {
   if (!d) return null;
-  return d.title || d.name || d.product_name || d.project_number
+  return d.title || d.name || d.product_name || d.project_number || d.user_email || d.email || d.filename
     || (d.content ? String(d.content).slice(0, 60) : null)
     || (d.body ? String(d.body).slice(0, 60) : null) || null;
 };

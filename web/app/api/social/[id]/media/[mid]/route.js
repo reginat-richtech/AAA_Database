@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../../../../lib/access';
-import { query } from '../../../../../../lib/db';
+import { query, mutateAs } from '../../../../../../lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,6 +38,6 @@ export async function DELETE(_req, { params }) {
   const m = await loadMedia(id, mid);
   if (!m) return NextResponse.json({ error: 'not found' }, { status: 404 });
   if (!visible(user, m)) return NextResponse.json({ error: 'Not allowed' }, { status: 403 });
-  await query('delete from ext.social_media where id = $1', [mid]);
+  await mutateAs(user.email, (q) => q('delete from ext.social_media where id = $1', [mid]));
   return NextResponse.json({ ok: true });
 }

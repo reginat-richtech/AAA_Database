@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/access';
-import { query } from '../../../lib/db';
+import { query, mutateAs } from '../../../lib/db';
 import { isValidSku, normalizeSku } from '../../../lib/inventory';
 
 export const runtime = 'nodejs';
@@ -110,12 +110,15 @@ export async function POST(req) {
   const product_line = deriveLine(category);
   const item_class = deriveClass(product_name);
 
-  const { rows } = await query(
-    `insert into inventory.cn_sku (count_period, product_name, sku, category, product_line, item_class, quantity, location, raw)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     returning id, product_name, sku, type, category, product_line, item_class, quantity, location`,
-    [period, product_name, sku, category, product_line, item_class, quantity, location,
-      JSON.stringify({ product_name, sku, quantity, location, added_by: user.email })],
-  );
-  return NextResponse.json(rows[0]);
+  const row = await mutateAs(user.email, async (q) => {
+    const { rows } = await q(
+      `insert into inventory.cn_sku (count_period, product_name, sku, category, product_line, item_class, quantity, location, raw)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       returning id, product_name, sku, type, category, product_line, item_class, quantity, location`,
+      [period, product_name, sku, category, product_line, item_class, quantity, location,
+        JSON.stringify({ product_name, sku, quantity, location, added_by: user.email })],
+    );
+    return rows[0];
+  });
+  return NextResponse.json(row);
 }

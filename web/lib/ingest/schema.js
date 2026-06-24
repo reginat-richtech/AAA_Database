@@ -301,12 +301,48 @@ export async function ensureExtSchema() {
       where n.nspname = 'audit' and p.proname = 'attach_audit' limit 1`,
   )).rowCount > 0;
   if (hasAudit) {
-    for (const [sch, tbl] of [['ext', 'task'], ['ext', 'task_update'], ['ext', 'task_project'], ['ext', 'social_post']]) {
+    // Standard attach (full row history + TRUNCATE logger) for app-owned tables —
+    // incl. the Kanban/PM tables (ext.pm_*) added later by the task-tracker rebuild.
+    for (const [sch, tbl] of [
+      ['ext', 'task'], ['ext', 'task_update'], ['ext', 'task_project'], ['ext', 'social_post'],
+      ['ext', 'pm_sheet'], ['ext', 'pm_workspace'], ['ext', 'pm_workspace_member'],
+      ['inventory', 'cn_sku'],
+    ]) {
       try {
         await pool.query('select audit.attach_audit($1, $2)', [sch, tbl]);
       } catch (e) {
         console.warn(`[audit] attach ${sch}.${tbl} skipped: ${e.message}`);
       }
+    }
+    // ext.social_media holds raw image/video bytes — audit add/remove but REDACT
+    // the `bytes` blob so the log records the action, not the file contents.
+    try { await pool.query(`select audit.attach_audit('ext', 'social_media', 'bytes')`); }
+    catch (e) { console.warn(`[audit] attach ext.social_media skipped: ${e.message}`); }
+    // ext.pm_task (Kanban tasks): a value-aware trigger so drag-to-reorder (bulk
+    // position-only updates) doesn't flood the log — only INSERT/DELETE and changes
+    // to meaningful fields (title, status/column, priority, assignee, …) are recorded.
+    // Needs EXECUTE on audit.if_modified (granted to app_readwrite in migration 0150).
+    try {
+      await pool.query(`
+        drop trigger if exists zzz_audit_pm_task on ext.pm_task;
+        drop trigger if exists zzz_audit_pm_task_iud on ext.pm_task;
+        drop trigger if exists zzz_audit_pm_task_upd on ext.pm_task;
+        create trigger zzz_audit_pm_task_iud after insert or delete on ext.pm_task
+          for each row execute function audit.if_modified();
+        create trigger zzz_audit_pm_task_upd after update on ext.pm_task
+          for each row when (
+            old.title             is distinct from new.title
+            or old.description    is distinct from new.description
+            or old.status         is distinct from new.status
+            or old.priority       is distinct from new.priority
+            or old.column_id      is distinct from new.column_id
+            or old.assignee_email is distinct from new.assignee_email
+            or old.due_date       is distinct from new.due_date
+            or old.tags           is distinct from new.tags
+          ) execute function audit.if_modified();
+      `);
+    } catch (e) {
+      console.warn(`[audit] pm_task trigger skipped: ${e.message}`);
     }
   }
   _ensured = true;
