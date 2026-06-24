@@ -9,7 +9,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const SEL = `t.id, t.project_id, t.title, t.description, t.note, t.type, t.department, t.assignee_email, t.created_by,
-  t.status, t.priority, t.tags, t.start_date, t.end_date, t.due_date, t.created_at, t.updated_at,
+  t.status, t.priority, t.column_id, t.position, t.tags, t.start_date, t.end_date, t.due_date, t.created_at, t.updated_at,
   a.project_number, a.title as project_title, a.counterparty,
   (select count(*) from ext.task_update u where u.task_id = t.id) as updates_count`;
 

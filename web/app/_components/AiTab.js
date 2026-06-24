@@ -2,12 +2,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { PageHeader } from './blueprint';
 import { getAi, peekAi, setAi } from '../../lib/aiCache';
+import ChatAssistant from './ChatAssistant';
 
 // Shared two-pane shell for the AI tabs. Normal loads read from the shared client
 // cache (which reads the DB-backed brief) so tab switches / alert details are
 // instant. Refresh does an Option-B sync: pulls fresh from the source into the DB
 // (?sync=1), then shows the recomputed result and updates the cache.
-export default function AiTab({ title, sub, sheet, endpoint, chatScope, renderLeft }) {
+export default function AiTab({ title, sub, sheet, endpoint, chatScope, domain, renderLeft }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -57,10 +58,7 @@ export default function AiTab({ title, sub, sheet, endpoint, chatScope, renderLe
         </section>
         <section className="panel">
           <div className="panel-title"><h2>AI chat</h2><span className="meta">{chatScope}</span></div>
-          <div className="chat-soon note">
-            💬 The conversational agent for this tab is the next phase.<br />
-            The panel on the left is <b>live data</b> from your account.
-          </div>
+          <ChatAssistant domain={domain} scope={chatScope} />
         </section>
       </div>
     </>

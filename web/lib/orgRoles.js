@@ -29,6 +29,21 @@ export const normalizeStatus = (s) => (TASK_STATUS.includes(s) ? s : 'open');
 export const normalizePriority = (p) => (TASK_PRIORITY.includes(p) ? p : 'medium');
 export const normalizeType = (t) => (TASK_TYPE.includes(t) ? t : 'other');
 
+// ── Kanban columns (ported from the old PM tracker) ──────────────────────────
+// A task lives in a `column_id` (its board position) and has a `position`
+// (sort order within the column). The coarse `status` is DERIVED from the
+// column, exactly like the old repo (review still counts as in-progress).
+export const TASK_COLUMNS = [
+  { id: 'todo', name: 'To Do', color: '#94a3b8' },
+  { id: 'in_progress', name: 'In Progress', color: '#3b82f6' },
+  { id: 'review', name: 'Review', color: '#f59e0b' },
+  { id: 'done', name: 'Done', color: '#22c55e' },
+];
+export const COLUMN_STATUS = { todo: 'open', in_progress: 'in_progress', review: 'in_progress', done: 'done' };
+export const STATUS_COLUMN = { open: 'todo', in_progress: 'in_progress', done: 'done', cancelled: 'done' };
+export const normalizeColumn = (c) => (TASK_COLUMNS.some((x) => x.id === c) ? c : 'todo');
+export const columnForStatus = (s) => STATUS_COLUMN[s] || 'todo';
+
 // Capabilities for one user against one task:
 //   canEdit   — change status/details (admin, dept manager, or the creator/assignee)
 //   canManage — assign to others / delete (admin or the task's department manager)

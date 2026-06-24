@@ -1,384 +1,370 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { PageHeader } from '../_components/blueprint';
-import { TASK_STATUS, TASK_STATUS_LABEL, TASK_PRIORITY, TASK_TYPE, TASK_TYPE_LABEL } from '../../lib/orgRoles';
+import { DEPARTMENTS, DEPARTMENT_LABEL } from '../../lib/orgRoles';
 
-const STATUS_COLOR = { open: '#94a3b8', in_progress: '#0ea5e9', done: '#16a34a', cancelled: '#6b7280' };
-const PRIORITY_COLOR = { low: '#94a3b8', medium: '#0ea5e9', high: '#f59e0b', urgent: '#dc2626' };
-const STATUS_EMOJI = { open: '⚪', in_progress: '🔵', done: '🟢', cancelled: '⚫' };
-const PRIORITY_EMOJI = { low: '⚪', medium: '🔵', high: '🟠', urgent: '🔴' };
-// Board (Kanban) colors keyed to the real task enums (open/in_progress/done/cancelled).
-const KCOLOR = { open: '#94a3b8', in_progress: '#0ea5e9', done: '#16a34a', cancelled: '#dc2626' };
-const KPRIO = { low: '#94a3b8', medium: '#0ea5e9', high: '#f59e0b', urgent: '#dc2626' };
+const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+const PCOLOR = { low: '#94a3b8', medium: '#0ea5e9', high: '#f59e0b', urgent: '#dc2626' };
+const who = (e) => (e ? String(e).split('@')[0] : '');
 const ymd = (d) => (d ? String(d).slice(0, 10) : '');
-const who = (email) => (email ? String(email).split('@')[0] : '');
-const NONE = '__none__';
+const slug = (s) => (String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'col');
 
 export default function Tasks() {
-  const [data, setData] = useState({ me: null, tasks: [], projects: [], members: [], inventory: [], allocations: [] });
+  const [data, setData] = useState({ me: null, workspaces: [], selectedId: null, role: null, sheets: [], tasks: [], members: [], people: [] });
+  const [wsId, setWsId] = useState(null);
+  const [sheetId, setSheetId] = useState(null);
+  const [view, setView] = useState('board');
   const [busy, setBusy] = useState(false);
-  const [search, setSearch] = useState('');
-  const [fStatus, setFStatus] = useState('');
-  const [editCell, setEditCell] = useState(null);   // { id, value } — inline title edit
-  const [openUpdates, setOpenUpdates] = useState(null);
-  const [updates, setUpdates] = useState([]);
-  const [newUpdate, setNewUpdate] = useState('');
-  const [addText, setAddText] = useState({});        // per-block "add a task" input
-  const [collapsed, setCollapsed] = useState({});    // per-block collapse state
-  const [invModal, setInvModal] = useState(null);    // { project_id, label, cn_sku_id, quantity, note } — allocate inventory
-  const [view, setView] = useState('table');          // 'table' | 'board' (PM-tracker Kanban)
+  const [addText, setAddText] = useState({});         // per-column "add task" input
+  const [edit, setEdit] = useState(null);             // task editor modal
+  const [modal, setModal] = useState(null);           // 'ws' | 'sheet' | 'members' | 'columns'
+  const [draft, setDraft] = useState('');             // generic name input for ws/sheet modals
+  const [wsDept, setWsDept] = useState('');           // department for the new-workspace modal
+  const [memberDraft, setMemberDraft] = useState({ email: '', role: 'member' });
+  const [colDraft, setColDraft] = useState([]);        // columns editor working copy
+  const [confirmDone, setConfirmDone] = useState(null); // { id, name, to } — prep done confirm (admin)
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
 
-  const load = useCallback(() => {
-    fetch('/api/tasks').then((r) => r.json()).then((d) => { if (d && !d.error) setData(d); }).catch(() => {});
+  const load = useCallback((ws) => {
+    const url = ws ? `/api/pm?workspace=${encodeURIComponent(ws)}` : '/api/pm';
+    fetch(url).then((r) => r.json()).then((d) => {
+      if (!d || d.error) return;
+      setData(d); setWsId(d.selectedId);
+      setSheetId((prev) => ((d.sheets || []).some((s) => s.id === prev) ? prev : (d.sheets[0]?.id || null)));
+    }).catch(() => {});
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(null); }, [load]);
 
-  async function patchField(id, field, value) {
-    setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, [field]: value } : t)) }));
-    const r = await fetch(`/api/tasks/${id}`, {
-      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [field]: value }),
-    }).catch(() => null);
-    if (!r || !r.ok) { load(); return; }
-    const updated = await r.json().catch(() => null);
-    if (updated) setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...updated } : t)) }));
-  }
+  const role = data.role;
+  const canWrite = !!role && role !== 'viewer';
+  const canManage = role === 'owner' || role === 'admin';
+  const canConfirm = !!data.me && (data.me.isAdmin || data.me.title === 'manager');   // who can confirm a prep task done
+  const ws = data.workspaces.find((w) => w.id === wsId) || null;
+  const sheet = data.sheets.find((s) => s.id === sheetId) || null;
+  const columns = sheet?.columns || [];
+  const sheetTasks = data.tasks.filter((t) => t.sheet_id === sheetId);
 
-  async function addTask(key) {
-    const title = (addText[key] || '').trim();
-    if (!title) return;
+  async function api(url, method, body) {
     setBusy(true);
-    const project_id = key === NONE ? null : key;
-    const r = await fetch('/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, project_id }) });
+    const r = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
     setBusy(false);
-    if (r.ok) { setAddText((s) => ({ ...s, [key]: '' })); load(); }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || `${method} failed`); return null; }
+    return r.json().catch(() => ({}));
   }
 
-  async function del(id) {
+  // Workspaces
+  // Departments the user may assign a new workspace to (non-admins: own dept only).
+  const deptChoices = data.me?.isAdmin ? DEPARTMENTS : (data.me?.department ? [data.me.department] : []);
+  function openWorkspaceModal() {
+    setDraft('');
+    setWsDept(data.me?.isAdmin ? '' : (data.me?.department || ''));
+    setModal('ws');
+  }
+  async function createWorkspace() {
+    const name = draft.trim(); if (!name) return;
+    const w = await api('/api/pm/workspaces', 'POST', { name, department: wsDept || null });
+    setModal(null); setDraft(''); setWsDept(''); if (w?.id) load(w.id);
+  }
+  async function deleteWorkspace() {
+    if (!ws || !window.confirm(`Delete workspace "${ws.name}" and all its sheets/tasks?`)) return;
+    await api(`/api/pm/workspaces/${ws.id}`, 'DELETE'); load(null);
+  }
+  // Sheets
+  async function createSheet() {
+    const name = draft.trim(); if (!name || !wsId) return;
+    const s = await api('/api/pm/sheets', 'POST', { workspace_id: wsId, name });
+    setModal(null); setDraft(''); load(wsId); if (s?.id) setSheetId(s.id);
+  }
+  async function deleteSheet() {
+    if (!sheet || !window.confirm(`Delete sheet "${sheet.name}" and its tasks?`)) return;
+    await api(`/api/pm/sheets/${sheet.id}`, 'DELETE'); load(wsId);
+  }
+  async function toggleSheetDone(id, done) {
+    await api(`/api/pm/sheets/${id}`, 'PATCH', { done });
+    load(wsId);
+  }
+  async function saveColumns() {
+    const cols = colDraft.filter((c) => c.name.trim()).map((c) => ({ id: c.id || slug(c.name), name: c.name.trim(), color: c.color || '#94a3b8' }));
+    if (!cols.length) return;
+    await api(`/api/pm/sheets/${sheet.id}`, 'PATCH', { columns: cols });
+    setModal(null); load(wsId);
+  }
+  // Tasks
+  async function createTask(column_id) {
+    const title = (addText[column_id] || '').trim(); if (!title) return;
+    await api('/api/pm/tasks', 'POST', { sheet_id: sheetId, column_id, title });
+    setAddText((s) => ({ ...s, [column_id]: '' })); load(wsId);
+  }
+  async function saveTask() {
+    const { id, ...fields } = edit;
+    if (id) await api(`/api/pm/tasks/${id}`, 'PATCH', fields);
+    setEdit(null); load(wsId);
+  }
+  async function deleteTask(id) {
     if (!window.confirm('Delete this task?')) return;
-    setBusy(true);
-    const r = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
-    setBusy(false);
-    if (r.ok) { if (openUpdates === id) setOpenUpdates(null); load(); }
-    else { const j = await r.json().catch(() => ({})); alert(j.error || 'Delete failed'); }
+    await api(`/api/pm/tasks/${id}`, 'DELETE'); setEdit(null); load(wsId);
+  }
+  async function reorderDrop(colId, beforeId) {
+    if (!dragId) return;
+    const ordered = sheetTasks.filter((t) => t.column_id === colId)
+      .sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9))
+      .map((t) => t.id).filter((x) => x !== dragId);
+    let idx = beforeId ? ordered.indexOf(beforeId) : ordered.length;
+    if (idx < 0) idx = ordered.length;
+    ordered.splice(idx, 0, dragId);
+    setDragId(null); setDragOver(null);
+    await api('/api/pm/tasks/reorder', 'POST', { sheet_id: sheetId, column_id: colId, ordered_ids: ordered });
+    load(wsId);
+  }
+  // Members
+  async function addMember() {
+    const email = memberDraft.email.trim(); if (!email) return;
+    await api(`/api/pm/workspaces/${wsId}/members`, 'POST', { email, role: memberDraft.role });
+    setMemberDraft({ email: '', role: 'member' }); load(wsId);
+  }
+  async function removeMember(email) {
+    await api(`/api/pm/workspaces/${wsId}/members?email=${encodeURIComponent(email)}`, 'DELETE'); load(wsId);
   }
 
-  const loadUpdates = useCallback((id) => {
-    fetch(`/api/tasks/${id}/updates`).then((r) => r.json()).then((u) => setUpdates(Array.isArray(u) ? u : [])).catch(() => setUpdates([]));
-  }, []);
-  function toggleUpdates(id) {
-    if (openUpdates === id) { setOpenUpdates(null); return; }
-    setOpenUpdates(id); setNewUpdate(''); setUpdates([]); loadUpdates(id);
-  }
-  async function addUpdate(id) {
-    if (!newUpdate.trim()) return;
-    setBusy(true);
-    const r = await fetch(`/api/tasks/${id}/updates`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: newUpdate.trim() }) });
-    setBusy(false);
-    if (r.ok) { setNewUpdate(''); loadUpdates(id); load(); }
-  }
-
-  // Allocate an inventory item to this block's project (inventory team / admins).
-  async function allocateInv() {
-    setBusy(true);
-    const res = await fetch(`/api/inventory/${invModal.cn_sku_id}/allocate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: invModal.project_id, quantity: invModal.quantity || null, note: invModal.note || null }),
-    });
-    setBusy(false);
-    if (res.ok) { setInvModal(null); load(); }
-    else { const j = await res.json().catch(() => ({})); alert(j.error || 'Allocation failed'); }
-  }
-
-  const sel = (t, field, opts, style) => (
-    <select className="tk-cell-sel" value={t[field] || ''} disabled={busy} style={style}
-      onChange={(e) => patchField(t.id, field, e.target.value || null)}>{opts}</select>
-  );
-  const txt = (t, field, ph) => (
-    <input className="tk-cell-text" defaultValue={t[field] || ''} placeholder={ph} disabled={busy}
-      onBlur={(e) => { if ((e.target.value || '') !== (t[field] || '')) patchField(t.id, field, e.target.value || null); }} />
-  );
-
-  // One task row (+ its update log when open).
-  const renderRow = (t) => (
-    <FragmentRow key={t.id}>
-      <tr className="tk-row">
-        <td className="tk-name">
-          {editCell?.id === t.id && editCell.field === 'title' ? (
-            <input autoFocus value={editCell.value}
-              onChange={(e) => setEditCell({ id: t.id, field: 'title', value: e.target.value })}
-              onBlur={() => { const v = editCell.value.trim(); if (v && v !== t.title) patchField(t.id, 'title', v); setEditCell(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditCell(null); }} />
-          ) : (
-            <span className="tk-editable" onClick={() => setEditCell({ id: t.id, field: 'title', value: t.title })}>{t.title}</span>
-          )}
-        </td>
-        <td>{sel(t, 'type', [<option key="" value="">—</option>, ...TASK_TYPE.map((x) => <option key={x} value={x}>{TASK_TYPE_LABEL[x]}</option>)])}</td>
-        <td>{sel(t, 'status', TASK_STATUS.map((s) => <option key={s} value={s}>{STATUS_EMOJI[s]} {TASK_STATUS_LABEL[s]}</option>), { color: STATUS_COLOR[t.status], fontWeight: 600 })}</td>
-        <td>{sel(t, 'priority', TASK_PRIORITY.map((p) => <option key={p} value={p}>{PRIORITY_EMOJI[p]} {p}</option>), { color: PRIORITY_COLOR[t.priority], fontWeight: 600 })}</td>
-        <td>{sel(t, 'assignee_email', [<option key="" value="">unassigned</option>,
-          ...(data.members || []).map((m) => <option key={m.email} value={m.email}>{m.name || who(m.email)}</option>),
-          ...(t.assignee_email && !(data.members || []).some((m) => m.email === t.assignee_email) ? [<option key="cur" value={t.assignee_email}>{who(t.assignee_email)}</option>] : [])])}</td>
-        <td><input type="date" className="tk-cell-date" value={ymd(t.start_date)} disabled={busy} onChange={(e) => patchField(t.id, 'start_date', e.target.value || null)} /></td>
-        <td><input type="date" className="tk-cell-date" value={ymd(t.end_date)} disabled={busy} onChange={(e) => patchField(t.id, 'end_date', e.target.value || null)} /></td>
-        <td>{txt(t, 'description', 'Description…')}</td>
-        <td>{txt(t, 'note', 'Note…')}</td>
-        <td className="tk-tagcell">
-          {editCell?.id === t.id && editCell.field === 'tags' ? (
-            <input autoFocus value={editCell.value} placeholder="tag1, tag2"
-              onChange={(e) => setEditCell({ id: t.id, field: 'tags', value: e.target.value })}
-              onBlur={() => { const arr = editCell.value.split(',').map((s) => s.trim()).filter(Boolean); if (JSON.stringify(arr) !== JSON.stringify(t.tags || [])) patchField(t.id, 'tags', arr); setEditCell(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditCell(null); }} />
-          ) : (
-            <span className="tk-editable tk-tags" onClick={() => setEditCell({ id: t.id, field: 'tags', value: (t.tags || []).join(', ') })}>
-              {(t.tags || []).length ? (t.tags || []).map((tg, i) => <span key={i} className="tk-tag">{tg}</span>) : <span className="note">＋</span>}
-            </span>
-          )}
-        </td>
-        <td>{sel(t, 'project_id', [<option key="" value="">— none —</option>,
-          ...(data.projects || []).map((p) => <option key={p.id} value={p.id}>{p.project_number}</option>)])}</td>
-        <td className="tk-upcell" onClick={() => toggleUpdates(t.id)} title="Daily updates">
-          {openUpdates === t.id ? '▾' : '💬'}{Number(t.updates_count) > 0 ? <span className="tk-upc"> {t.updates_count}</span> : ''}
-        </td>
-        <td><button type="button" className="tk-del" title="Delete" onClick={() => del(t.id)} disabled={busy}>✕</button></td>
-      </tr>
-      {openUpdates === t.id && (
-        <tr className="tk-detailrow">
-          <td colSpan={13}>
-            <div className="tk-updates">
-              <div className="tk-uphd">Daily updates — {t.title}</div>
-              <div className="tk-uprow">
-                <input value={newUpdate} onChange={(e) => setNewUpdate(e.target.value)} placeholder="Add today’s update…"
-                  onKeyDown={(e) => { if (e.key === 'Enter') addUpdate(t.id); }} />
-                <button type="button" className="secondary" onClick={() => addUpdate(t.id)} disabled={busy || !newUpdate.trim()}>Add</button>
-              </div>
-              {updates.length === 0 ? <p className="note" style={{ marginTop: 8 }}>No updates yet.</p> : (
-                <ul className="tk-uplist">
-                  {updates.map((u) => (
-                    <li key={u.id}><div className="note tk-upmeta">{new Date(u.created_at).toLocaleString()} · {who(u.author)}</div><div className="tk-upbody">{u.body}</div></li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
-    </FragmentRow>
-  );
-
-  // Filter, then group by project.
-  const rows = (data.tasks || []).filter((t) => {
-    if (fStatus && t.status !== fStatus) return false;
-    if (!search) return true;
-    const hay = `${t.title} ${t.type || ''} ${who(t.assignee_email)} ${t.project_number || ''} ${t.project_title || ''}`.toLowerCase();
-    return hay.includes(search.toLowerCase());
-  });
-  const groups = {};
-  for (const t of rows) (groups[t.project_id || NONE] ||= []).push(t);
-  const keys = Object.keys(groups).sort((a, b) => {
-    if (a === NONE) return 1; if (b === NONE) return -1;
-    return String(groups[a][0]?.project_number || '').localeCompare(String(groups[b][0]?.project_number || ''));
-  });
-
-  // Inventory allocations grouped by project (inventory team/admins can add).
-  const canAllocate = !!data.me && (data.me.isAdmin || data.me.department === 'inventory');
-  const allocByProject = {};
-  for (const a of data.allocations || []) (allocByProject[a.project_id] = allocByProject[a.project_id] || []).push(a);
-
-  const HEAD = (
-    <thead><tr>
-      <th>Task</th><th>Type</th><th>Status</th><th>Priority</th><th>Assignee</th>
-      <th>Start</th><th>End</th><th>Description</th><th>Note</th><th>Tags</th><th>Project</th><th title="daily updates">💬</th><th></th>
-    </tr></thead>
-  );
+  const assigneeOptions = (data.people || []).map((p) => ({ email: p.email, name: p.name || who(p.email) }));
 
   return (
     <>
-      <PageHeader title="Task Tracking" sub="Tasks grouped by project — each project is its own block. Click any cell to edit it in place; add a task at the bottom of a block. Project link is optional." sheet="Task Tracking" />
+      <PageHeader title="Task Tracking" sub="PM workspaces → sheets → tasks. Custom Kanban columns, drag-and-drop, and members — ported from the old PM tracker." sheet="Task Tracking" />
 
+      {/* Workspace bar */}
       <div className="toolbar">
-        <div className="tk-viewtoggle">
-          <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>Table</button>
-          <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
-        </div>
-        <input placeholder="Search task, type, assignee…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 220 }} />
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          {TASK_STATUS.map((s) => <option key={s} value={s}>{TASK_STATUS_LABEL[s]}</option>)}
+        <select value={wsId || ''} onChange={(e) => load(e.target.value)} style={{ minWidth: 220 }}>
+          {data.workspaces.length === 0 && <option value="">No workspaces</option>}
+          {data.workspaces.map((w) => <option key={w.id} value={w.id}>{w.icon} {w.name}</option>)}
         </select>
-        <span className="note" style={{ marginLeft: 'auto' }}>{rows.length} task(s) · {view === 'table' ? `${keys.length} block(s)` : 'board'}</span>
+        <button onClick={openWorkspaceModal}>+ Workspace</button>
+        {ws && canManage && !ws.department && <button className="secondary" onClick={() => setModal('members')}>Members ({data.members.length})</button>}
+        {ws && canManage && <button className="secondary" onClick={deleteWorkspace}>Delete workspace</button>}
+        {ws?.department && <span className="chip">👥 {DEPARTMENT_LABEL[ws.department] || ws.department} team</span>}
+        {ws && <span className="note" style={{ marginLeft: 'auto' }}>your role: {role}</span>}
       </div>
 
-      {/* PM-tracker Kanban board view — columns = status, drag a card to move it. */}
-      {view === 'board' && (
-        <div className="pmk-board">
-          {TASK_STATUS.map((s) => {
-            const colTasks = rows.filter((t) => (t.status || 'open') === s);
-            return (
-              <div key={s} className={'pmk-col' + (dragOver === s ? ' drag-over' : '')}
-                onDragOver={(e) => { e.preventDefault(); if (dragOver !== s) setDragOver(s); }}
-                onDragLeave={() => setDragOver((c) => (c === s ? null : c))}
-                onDrop={() => { if (dragId) patchField(dragId, 'status', s); setDragId(null); setDragOver(null); }}>
-                <div className="pmk-colhd"><span className="pmk-dot" style={{ background: KCOLOR[s] }} /> {TASK_STATUS_LABEL[s]} <span className="note">{colTasks.length}</span></div>
-                <div className="pmk-cards">
-                  {colTasks.map((t) => (
-                    <div key={t.id} className="pmk-card" draggable
-                      onDragStart={() => setDragId(t.id)} onDragEnd={() => { setDragId(null); setDragOver(null); }}
-                      title="Drag to another column to change status">
-                      <div className="pmk-title">{t.title}</div>
-                      <div className="pmk-meta">
-                        {t.project_number && <span className="tk-projchip">{t.project_number}</span>}
-                        {t.priority && <span className="pmk-pri" style={{ color: KPRIO[t.priority] }}>● {t.priority}</span>}
-                        {t.assignee_email && <span className="note">{who(t.assignee_email)}</span>}
-                        {t.type && <span className="note">{TASK_TYPE_LABEL[t.type] || t.type}</span>}
-                      </div>
-                    </div>
-                  ))}
-                  {colTasks.length === 0 && <div className="pmk-empty">—</div>}
+      {data.workspaces.length === 0 ? (
+        <div className="panel"><p className="note" style={{ margin: 0 }}>No workspaces yet — create one to start tracking tasks across sheets.</p></div>
+      ) : (
+        <>
+          {/* Sheet tabs */}
+          <div className="pm-tabs">
+            {data.sheets.map((s) => (
+              <button key={s.id} className={'pm-tab' + (s.id === sheetId ? ' on' : '') + (s.done ? ' done' : '')} onClick={() => setSheetId(s.id)}>
+                {s.done && s.stage_key ? '✓ ' : ''}{s.name}
+              </button>
+            ))}
+            {canWrite && <button className="pm-tab pm-tab-add" onClick={() => { setDraft(''); setModal('sheet'); }}>+ Sheet</button>}
+          </div>
+
+          {!sheet ? (
+            <div className="panel"><p className="note" style={{ margin: 0 }}>No sheets yet — add one with “+ Sheet”.</p></div>
+          ) : (
+            <>
+              <div className="toolbar">
+                <div className="tk-viewtoggle">
+                  <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
+                  <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>Table</button>
                 </div>
+                {canWrite && <button className="secondary" onClick={() => { setColDraft(columns.map((c) => ({ ...c }))); setModal('columns'); }}>Edit columns</button>}
+                {canWrite && <button className="secondary" onClick={deleteSheet}>Delete sheet</button>}
+                <span className="note" style={{ marginLeft: 'auto' }}>{sheetTasks.length} task(s)</span>
+                {sheet.stage_key && (
+                  <button className={'pm-donebtn' + (sheet.done ? ' on' : '')} disabled={!canConfirm}
+                    title={canConfirm ? 'Confirm this prep task as done' : 'Only an admin or manager can confirm'}
+                    onClick={() => setConfirmDone({ id: sheet.id, name: sheet.name, to: !sheet.done })}>
+                    {sheet.done ? '✓ Done' : 'Mark done'}
+                  </button>
+                )}
               </div>
-            );
-          })}
+
+              {view === 'board' && (
+                <div className="pmk-board">
+                  {columns.map((col) => {
+                    const colTasks = sheetTasks.filter((t) => t.column_id === col.id).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
+                    return (
+                      <div key={col.id} className={'pmk-col' + (dragOver === col.id ? ' drag-over' : '')}
+                        onDragOver={(e) => { e.preventDefault(); if (dragOver !== col.id) setDragOver(col.id); }}
+                        onDragLeave={() => setDragOver((c) => (c === col.id ? null : c))}
+                        onDrop={() => reorderDrop(col.id, null)}>
+                        <div className="pmk-colhd"><span className="pmk-dot" style={{ background: col.color }} /> {col.name} <span className="note">{colTasks.length}</span></div>
+                        <div className="pmk-cards">
+                          {colTasks.map((t) => (
+                            <div key={t.id} className="pmk-card" draggable={canWrite}
+                              onDragStart={() => setDragId(t.id)} onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                              onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.stopPropagation(); reorderDrop(col.id, t.id); }}
+                              onClick={() => setEdit({ id: t.id, title: t.title, description: t.description || '', column_id: t.column_id, priority: t.priority, assignee_email: t.assignee_email || '', due_date: ymd(t.due_date) })}>
+                              <div className="pmk-title">{t.title}</div>
+                              <div className="pmk-meta">
+                                <span className="pmk-pri" style={{ color: PCOLOR[t.priority] }}>● {t.priority}</span>
+                                {t.assignee_email && <span className="note">{who(t.assignee_email)}</span>}
+                                {t.due_date && <span className="note">📅 {ymd(t.due_date)}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {canWrite && (
+                          <div className="pmk-add">
+                            <input placeholder="+ Add task" value={addText[col.id] || ''} onChange={(e) => setAddText((s) => ({ ...s, [col.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') createTask(col.id); }} disabled={busy} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {view === 'table' && (
+                <div className="panel tablewrap">
+                  <table>
+                    <thead><tr><th>Task</th><th>Column</th><th>Priority</th><th>Assignee</th><th>Due</th></tr></thead>
+                    <tbody>
+                      {sheetTasks.length ? sheetTasks.map((t) => {
+                        const col = columns.find((c) => c.id === t.column_id);
+                        return (
+                          <tr key={t.id} className="pm-trow" onClick={() => setEdit({ id: t.id, title: t.title, description: t.description || '', column_id: t.column_id, priority: t.priority, assignee_email: t.assignee_email || '', due_date: ymd(t.due_date) })}>
+                            <td>{t.title}</td>
+                            <td><span className="chip" style={{ background: (col?.color || '#94a3b8') + '22', color: col?.color || '#64748b' }}>{col?.name || t.column_id}</span></td>
+                            <td style={{ color: PCOLOR[t.priority] }}>● {t.priority}</td>
+                            <td className="note">{who(t.assignee_email)}</td>
+                            <td className="note">{ymd(t.due_date)}</td>
+                          </tr>
+                        );
+                      }) : <tr><td colSpan={5} className="note">No tasks yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {/* Task editor */}
+      {edit && (
+        <div className="pm-overlay" onClick={() => setEdit(null)}>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pm-mhead"><b>Edit task</b><button className="secondary" onClick={() => setEdit(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
+            <label className="pm-f">Title<input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} disabled={!canWrite} /></label>
+            <div className="pm-frow">
+              <label className="pm-f">Column<select value={edit.column_id} onChange={(e) => setEdit({ ...edit, column_id: e.target.value })} disabled={!canWrite}>
+                {columns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select></label>
+              <label className="pm-f">Priority<select value={edit.priority} onChange={(e) => setEdit({ ...edit, priority: e.target.value })} disabled={!canWrite}>
+                {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select></label>
+            </div>
+            <div className="pm-frow">
+              <label className="pm-f">Assignee<select value={edit.assignee_email} onChange={(e) => setEdit({ ...edit, assignee_email: e.target.value })} disabled={!canWrite}>
+                <option value="">Unassigned</option>
+                {assigneeOptions.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+                {edit.assignee_email && !assigneeOptions.some((m) => m.email === edit.assignee_email) && <option value={edit.assignee_email}>{who(edit.assignee_email)}</option>}
+              </select></label>
+              <label className="pm-f">Due date<input type="date" value={edit.due_date} onChange={(e) => setEdit({ ...edit, due_date: e.target.value })} disabled={!canWrite} /></label>
+            </div>
+            <label className="pm-f">Description<textarea rows={4} value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} disabled={!canWrite} /></label>
+            <div className="pm-mactions">
+              {canWrite && <button onClick={saveTask} disabled={busy || !edit.title.trim()}>Save</button>}
+              {canWrite && <button className="secondary" onClick={() => deleteTask(edit.id)} disabled={busy} style={{ marginLeft: 'auto' }}>Delete</button>}
+              <button className="secondary" onClick={() => setEdit(null)}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 
-      {view === 'table' && (<>
-
-      {keys.map((k) => {
-        const gtasks = groups[k];
-        const meta = gtasks[0] || {};
-        const label = k === NONE ? 'No project'
-          : `${meta.project_number || 'Project'}${meta.project_title ? ' — ' + meta.project_title : (meta.counterparty ? ' — ' + meta.counterparty : '')}`;
-        const open = collapsed[k] !== true;
-        const done = gtasks.filter((t) => t.status === 'done').length;
-        return (
-          <div className="panel tk-block" key={k}>
-            <div className="tk-blockhead" onClick={() => setCollapsed((m) => ({ ...m, [k]: !m[k] }))}>
-              <span className="tk-caret">{open ? '▾' : '▸'}</span>
-              {k !== NONE && <span className="tk-projchip">{meta.project_number || 'PRJ'}</span>}
-              <span className="tk-blocktitle">{k === NONE ? 'No project' : (meta.project_title || meta.counterparty || 'Project')}</span>
-              <div className="tk-prog" style={{ marginLeft: 'auto' }} title={`${done} of ${gtasks.length} done`}>
-                <div className="tk-prog-fill" style={{ width: `${gtasks.length ? Math.round((done / gtasks.length) * 100) : 0}%` }} />
-              </div>
-              <span className="note tk-progtxt">{done}/{gtasks.length}</span>
+      {/* Confirm prep-done (admin only) */}
+      {confirmDone && (
+        <div className="pm-overlay" onClick={() => setConfirmDone(null)}>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="pm-mhead"><b>{confirmDone.to ? 'Mark prep task done?' : 'Reopen prep task?'}</b></div>
+            <p className="note" style={{ marginTop: 0 }}>“{confirmDone.name}” — this updates the Team Preparation step on the Project Tracker.</p>
+            <div className="pm-mactions">
+              <button onClick={async () => { await toggleSheetDone(confirmDone.id, confirmDone.to); setConfirmDone(null); }} disabled={busy}>Confirm</button>
+              <button className="secondary" onClick={() => setConfirmDone(null)}>Cancel</button>
             </div>
-            {open && (
-              <div className="tk-blockbody">
-                {k !== NONE && (
-                  <div className="tk-inv">
-                    <span className="note">📦 Inventory:</span>
-                    {(allocByProject[k] || []).length === 0 && <span className="note">none yet</span>}
-                    {(allocByProject[k] || []).map((a) => (
-                      <span key={a.id} className="tk-invchip" title={a.product_name || ''}>{a.sku || a.product_name || 'item'}{a.quantity ? ` ×${a.quantity}` : ''}</span>
-                    ))}
-                    {canAllocate && <button type="button" className="secondary tk-invadd" onClick={() => setInvModal({ project_id: k, label, cn_sku_id: '', quantity: '', note: '' })}>+ Add inventory</button>}
-                  </div>
-                )}
-                <table className="tk-table">
-                  {HEAD}
-                  <tbody>
-                    {gtasks.map(renderRow)}
-                    <tr className="tk-addrow"><td colSpan={13}>
-                      <input className="tk-addinput" placeholder="+ Add a task to this block…" value={addText[k] || ''}
-                        onChange={(e) => setAddText((s) => ({ ...s, [k]: e.target.value }))}
-                        onKeyDown={(e) => { if (e.key === 'Enter') addTask(k); }} disabled={busy} />
-                      {(addText[k] || '').trim() && <button className="secondary" onClick={() => addTask(k)} disabled={busy} style={{ marginLeft: 8 }}>Add</button>}
-                    </td></tr>
-                  </tbody>
-                </table>
+          </div>
+        </div>
+      )}
+
+      {/* New workspace / sheet modal */}
+      {(modal === 'ws' || modal === 'sheet') && (
+        <div className="pm-overlay" onClick={() => setModal(null)}>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pm-mhead"><b>{modal === 'ws' ? 'New workspace' : 'New sheet'}</b><button className="secondary" onClick={() => setModal(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
+            <label className="pm-f">Name<input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (modal === 'ws' ? createWorkspace() : createSheet()); }} placeholder={modal === 'ws' ? 'e.g. Q3 Installs' : 'e.g. Backlog'} /></label>
+            {modal === 'ws' && (
+              <label className="pm-f">Department
+                <select value={wsDept} onChange={(e) => setWsDept(e.target.value)}>
+                  <option value="">No department (private workspace)</option>
+                  {deptChoices.map((d) => <option key={d} value={d}>{DEPARTMENT_LABEL[d] || d}</option>)}
+                </select>
+              </label>
+            )}
+            {modal === 'ws' && (
+              <p className="note" style={{ margin: '2px 0 0' }}>{wsDept ? `Only the ${DEPARTMENT_LABEL[wsDept] || wsDept} team can access this workspace.` : 'Private to the members you add.'}</p>
+            )}
+            <div className="pm-mactions"><button onClick={modal === 'ws' ? createWorkspace : createSheet} disabled={busy || !draft.trim()}>Create</button><button className="secondary" onClick={() => setModal(null)}>Cancel</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* Members modal */}
+      {modal === 'members' && (
+        <div className="pm-overlay" onClick={() => setModal(null)}>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pm-mhead"><b>Members — {ws?.name}</b><button className="secondary" onClick={() => setModal(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
+            <ul className="pm-members">
+              {data.members.map((m) => (
+                <li key={m.id}><span>{m.user_email}</span><span className="chip">{m.role}</span>
+                  {canManage && m.role !== 'owner' && <button className="pm-rm" onClick={() => removeMember(m.user_email)} disabled={busy}>✕</button>}
+                </li>
+              ))}
+            </ul>
+            {canManage && (
+              <div className="pm-frow" style={{ alignItems: 'end' }}>
+                <label className="pm-f">Email<input value={memberDraft.email} onChange={(e) => setMemberDraft({ ...memberDraft, email: e.target.value })} placeholder="name@richtechsystem.com" /></label>
+                <label className="pm-f">Role<select value={memberDraft.role} onChange={(e) => setMemberDraft({ ...memberDraft, role: e.target.value })}>
+                  <option value="member">Member</option><option value="admin">Admin</option><option value="viewer">Viewer</option>
+                </select></label>
+                <button onClick={addMember} disabled={busy || !memberDraft.email.trim()}>Add</button>
               </div>
             )}
           </div>
-        );
-      })}
-
-      {keys.length === 0 && (
-        <div className="panel">
-          <p className="note">No tasks yet.</p>
-          <input className="tk-addinput" placeholder="+ Add your first task…" value={addText[NONE] || ''}
-            onChange={(e) => setAddText((s) => ({ ...s, [NONE]: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === 'Enter') addTask(NONE); }} disabled={busy} />
         </div>
       )}
-      </>)}
 
-      {invModal && (
-        <div className="tk-overlay" onClick={() => setInvModal(null)}>
-          <div className="tk-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="tk-mhead"><b>Add inventory to project</b><button type="button" className="secondary" onClick={() => setInvModal(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
-            <p className="note" style={{ marginTop: 0 }}>{invModal.label}</p>
-            <label className="tk-f">Inventory item
-              <select value={invModal.cn_sku_id} onChange={(e) => setInvModal({ ...invModal, cn_sku_id: e.target.value })}>
-                <option value="">Select an item…</option>
-                {(data.inventory || []).map((it) => <option key={it.id} value={it.id}>{(it.sku ? it.sku + ' — ' : '')}{it.product_name || 'item'}{it.quantity != null ? ` (qty ${it.quantity})` : ''}</option>)}
-              </select>
-            </label>
-            <div className="tk-frow">
-              <label className="tk-f">Quantity<input type="number" value={invModal.quantity} onChange={(e) => setInvModal({ ...invModal, quantity: e.target.value })} /></label>
-              <label className="tk-f">Note<input value={invModal.note} onChange={(e) => setInvModal({ ...invModal, note: e.target.value })} placeholder="optional" /></label>
-            </div>
-            <div className="tk-mactions">
-              <button onClick={allocateInv} disabled={busy || !invModal.cn_sku_id}>Add to project</button>
-              <button className="secondary" onClick={() => setInvModal(null)}>Cancel</button>
-            </div>
+      {/* Columns editor */}
+      {modal === 'columns' && (
+        <div className="pm-overlay" onClick={() => setModal(null)}>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pm-mhead"><b>Columns — {sheet?.name}</b><button className="secondary" onClick={() => setModal(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
+            <p className="note" style={{ marginTop: 0 }}>Rename, recolor, add or remove Kanban columns. Tasks in a removed column move to the first column.</p>
+            {colDraft.map((c, i) => (
+              <div key={i} className="pm-colrow">
+                <input type="color" value={c.color || '#94a3b8'} onChange={(e) => setColDraft((d) => d.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)))} />
+                <input value={c.name} onChange={(e) => setColDraft((d) => d.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Column name" />
+                <button className="pm-rm" onClick={() => setColDraft((d) => d.filter((_, j) => j !== i))} title="Remove">✕</button>
+              </div>
+            ))}
+            <button className="secondary" onClick={() => setColDraft((d) => [...d, { id: '', name: '', color: '#94a3b8' }])} style={{ marginTop: 6 }}>+ Add column</button>
+            <div className="pm-mactions"><button onClick={saveColumns} disabled={busy}>Save columns</button><button className="secondary" onClick={() => setModal(null)}>Cancel</button></div>
           </div>
         </div>
       )}
 
       <style>{`
-        .tk-block { padding:0; overflow:hidden; }
-        .tk-inv { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px dashed var(--line); }
-        .tk-invchip { font-size:11px; background:#eef2f7; color:#334155; padding:2px 8px; border-radius:999px; }
-        .tk-invadd { font-size:11px; padding:2px 10px; margin-left:auto; }
-        .tk-overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:60; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; }
-        .tk-modal { width:460px; max-width:96vw; background:var(--surface); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.3); padding:18px; }
-        .tk-mhead { display:flex; align-items:center; gap:10px; padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid var(--line); }
-        .tk-f { display:grid; gap:4px; font-size:13px; color:var(--muted); margin-top:10px; }
-        .tk-f input, .tk-f select { width:100%; }
-        .tk-frow { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-        .tk-mactions { display:flex; gap:8px; margin-top:18px; }
-        .tk-blockhead { display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; }
-        .tk-blockhead:hover { background:rgba(0,0,0,.02); }
-        .tk-caret { color:var(--muted); width:12px; }
-        .tk-projchip { font-weight:700; font-size:11px; background:#0f172a; color:#fff; padding:1px 8px; border-radius:999px; }
-        .tk-blocktitle { font-weight:600; font-size:14px; }
-        .tk-blockbody { border-top:1px solid var(--line); overflow-x:auto; }
-        .tk-table { width:100%; border-collapse:collapse; font-size:13px; white-space:nowrap; }
-        .tk-table th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); padding:7px 8px; border-bottom:1px solid var(--line); }
-        .tk-table td { padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:middle; }
-        .tk-row:hover td { background:rgba(37,99,235,.035); }
-        .tk-prog { width:130px; height:7px; background:var(--line); border-radius:999px; overflow:hidden; flex:0 0 auto; }
-        .tk-prog-fill { height:100%; background:#16a34a; border-radius:999px; transition:width .25s; }
-        .tk-progtxt { flex:0 0 auto; min-width:36px; text-align:right; }
-        .tk-name { font-weight:600; min-width:170px; }
-        .tk-editable { cursor:text; display:inline-block; min-width:80px; padding:2px 0; }
-        .tk-editable:hover { background:rgba(0,0,0,.04); border-radius:4px; }
-        .tk-name input { width:100%; min-width:150px; font-weight:600; }
-        .tk-cell-sel { appearance:none; -webkit-appearance:none; -moz-appearance:none; background:transparent; background-image:none;
-          border:1px solid transparent; border-radius:5px; padding:3px 6px; font:inherit; cursor:pointer; min-width:84px; }
-        .tk-cell-sel::-ms-expand { display:none; }
-        .tk-cell-sel:hover, .tk-cell-sel:focus { border-color:var(--line); background:var(--surface); outline:none; }
-        .tk-cell-date { border:1px solid transparent; background:transparent; padding:3px 4px; font:inherit; border-radius:5px; }
-        .tk-cell-date:hover, .tk-cell-date:focus { border-color:var(--line); background:var(--surface); outline:none; }
-        .tk-cell-text { border:1px solid transparent; background:transparent; padding:3px 6px; font:inherit; border-radius:5px; min-width:150px; }
-        .tk-cell-text:hover, .tk-cell-text:focus { border-color:var(--line); background:var(--surface); outline:none; }
-        .tk-tags { display:inline-flex; flex-wrap:wrap; gap:4px; min-width:90px; }
-        .tk-tag { background:#eef2f7; color:#334155; border-radius:5px; padding:1px 7px; font-size:11px; white-space:nowrap; }
-        .tk-tagcell input { min-width:120px; }
-        .tk-upcell { cursor:pointer; text-align:center; user-select:none; }
-        .tk-upc { color:var(--primary); font-weight:700; font-size:11px; }
-        .tk-del { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; padding:4px 6px; border-radius:5px; }
-        .tk-del:hover { background:#fee2e2; color:#dc2626; }
-        .tk-detailrow td { background:rgba(0,0,0,.015); white-space:normal; }
-        .tk-updates { padding:8px 2px 12px; max-width:680px; }
-        .tk-uphd { font-weight:700; font-size:12px; margin-bottom:8px; }
-        .tk-uprow { display:flex; gap:8px; } .tk-uprow input { flex:1 1 auto; min-width:240px; }
-        .tk-uplist { list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:9px; max-height:220px; overflow:auto; }
-        .tk-uplist li { border-left:2px solid var(--line); padding:1px 0 1px 10px; }
-        .tk-upmeta { font-size:11px; } .tk-upbody { font-size:13px; white-space:pre-wrap; word-break:break-word; }
-        .tk-addrow td { background:transparent; white-space:normal; }
-        .tk-addinput { width:60%; min-width:280px; }
+        .pm-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+        .pm-tab { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); background:var(--surface); border-radius:8px 8px 0 0; padding:7px 14px; font:inherit; cursor:pointer; color:var(--muted); }
+        .pm-tab.on { background:var(--primary); color:#fff; border-color:var(--primary); font-weight:600; }
+        .pm-tab.done:not(.on) { border-color:#16a34a; color:#16a34a; }
+        .pm-tab-add { color:var(--primary); }
+        .pm-donebtn { border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:6px 14px; font:inherit; cursor:pointer; color:var(--muted); }
+        .pm-donebtn:hover:not(:disabled) { border-color:var(--primary); }
+        .pm-donebtn:disabled { opacity:.5; cursor:not-allowed; }
+        .pm-donebtn.on { background:#16a34a; color:#fff; border-color:#16a34a; font-weight:600; }
         .tk-viewtoggle { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
         .tk-viewtoggle button { border:0; background:var(--surface); padding:6px 14px; font:inherit; cursor:pointer; color:var(--muted); }
         .tk-viewtoggle button + button { border-left:1px solid var(--line); }
@@ -386,18 +372,31 @@ export default function Tasks() {
         .pmk-board { display:flex; gap:12px; overflow-x:auto; align-items:flex-start; padding-bottom:10px; }
         .pmk-col { flex:1 1 0; min-width:240px; background:#f1f1ef; border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; }
         .pmk-col.drag-over { background:#e6effb; box-shadow:inset 0 0 0 2px rgba(37,99,235,.25); }
-        .pmk-colhd { display:flex; align-items:center; gap:8px; padding:10px 12px; font-size:12px; font-weight:600; color:var(--ink); }
+        .pmk-colhd { display:flex; align-items:center; gap:8px; padding:10px 12px; font-size:12px; font-weight:600; }
         .pmk-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-        .pmk-cards { padding:4px 8px 10px; display:flex; flex-direction:column; gap:6px; min-height:40px; }
-        .pmk-card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:9px 11px; cursor:grab; box-shadow:var(--shadow); }
+        .pmk-cards { padding:4px 8px; display:flex; flex-direction:column; gap:6px; min-height:24px; }
+        .pmk-card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:9px 11px; cursor:pointer; box-shadow:var(--shadow); }
         .pmk-card:hover { box-shadow:0 6px 18px rgba(0,0,0,.08); transform:translateY(-1px); }
-        .pmk-title { font-size:13px; font-weight:600; margin-bottom:5px; word-break:break-word; white-space:normal; }
+        .pmk-title { font-size:13px; font-weight:600; margin-bottom:5px; word-break:break-word; }
         .pmk-meta { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:11px; }
         .pmk-pri { font-weight:600; text-transform:capitalize; }
-        .pmk-empty { text-align:center; color:var(--muted); font-size:12px; padding:8px 0; }
+        .pmk-add { padding:6px 8px 10px; } .pmk-add input { width:100%; font-size:12px; padding:5px 8px; }
+        .pm-trow { cursor:pointer; } .pm-trow:hover td { background:rgba(37,99,235,.035); }
+        .pm-overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:60; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow:auto; }
+        .pm-modal { width:520px; max-width:96vw; background:var(--surface); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.3); padding:18px; }
+        .pm-mhead { display:flex; align-items:center; gap:10px; padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid var(--line); }
+        .pm-f { display:grid; gap:4px; font-size:13px; color:var(--muted); margin-top:10px; }
+        .pm-f input, .pm-f select, .pm-f textarea { width:100%; }
+        .pm-frow { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .pm-mactions { display:flex; gap:8px; margin-top:18px; }
+        .pm-members { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+        .pm-members li { display:flex; align-items:center; gap:8px; font-size:13px; }
+        .pm-rm { border:0; background:transparent; color:var(--muted); cursor:pointer; }
+        .pm-rm:hover { color:var(--bad); }
+        .pm-colrow { display:flex; align-items:center; gap:8px; margin-top:8px; }
+        .pm-colrow input[type=color] { width:34px; height:30px; padding:0; border:1px solid var(--line); border-radius:6px; }
+        .pm-colrow input:not([type=color]) { flex:1; }
       `}</style>
     </>
   );
 }
-
-function FragmentRow({ children }) { return <>{children}</>; }

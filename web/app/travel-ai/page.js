@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { PageHeader } from '../_components/blueprint';
+import ChatAssistant from '../_components/ChatAssistant';
 import { getAi, peekAi, setAi } from '../../lib/aiCache';
 
 const money = (n) => '$' + Math.round(Number(n) || 0).toLocaleString();
@@ -154,10 +155,7 @@ export default function TravelAI() {
 
         <section className="panel">
           <div className="panel-title"><h2>AI chat</h2><span className="meta">Bookings · per-diem · spend</span></div>
-          <div className="chat-soon note">
-            💬 The Travel AI conversational agent is the next phase.<br />
-            The review on the left is <b>live data</b> from Navan.
-          </div>
+          <ChatAssistant domain="travel" scope="Bookings · per-diem · spend" />
         </section>
       </div>
 

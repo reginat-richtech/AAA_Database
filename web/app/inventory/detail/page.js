@@ -18,6 +18,10 @@ export default function InventoryDetail() {
   const [showZero, setShowZero] = useState(false);   // default: hide 0-qty items
   const [busy, setBusy] = useState(false);
   const [addForm, setAddForm] = useState(null);       // add-item modal
+  const [manage, setManage] = useState(null);         // item being managed (load/remove/adjust/delete)
+  const [amt, setAmt] = useState('');                 // load/remove amount
+  const [setVal, setSetVal] = useState('');           // set-exact quantity
+  const [mloc, setMloc] = useState('');               // location edit
 
   const load = (period) => {
     const url = period ? `/api/inventory?period=${encodeURIComponent(period)}` : '/api/inventory';
@@ -60,6 +64,29 @@ export default function InventoryDetail() {
     if (r.ok) { setAddForm(null); load(data.period); }
     else { const j = await r.json().catch(() => ({})); alert(j.error || 'Add failed'); }
   }
+  function openManage(item) { setManage(item); setAmt(''); setSetVal(''); setMloc(item.location || ''); }
+
+  // Apply a change to the managed item, then refresh the list + the open modal.
+  async function patchItem(body) {
+    setBusy(true);
+    const r = await fetch(`/api/inventory/${manage.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    setBusy(false);
+    if (r.ok) { const updated = await r.json(); setManage(updated); setAmt(''); setSetVal(''); load(data.period); }
+    else { const j = await r.json().catch(() => ({})); alert(j.error || 'Update failed'); }
+  }
+  const doDelta = (n) => patchItem({ delta: n });
+
+  async function deleteItem() {
+    if (!confirm(`Delete "${manage.product_name || manage.sku || 'item'}"? This cannot be undone.`)) return;
+    setBusy(true);
+    const r = await fetch(`/api/inventory/${manage.id}`, { method: 'DELETE' });
+    setBusy(false);
+    if (r.ok) { setManage(null); load(data.period); }
+    else { const j = await r.json().catch(() => ({})); alert(j.error || 'Delete failed'); }
+  }
+
   const canEdit = data.canEdit;
   const cols = 8;
 
@@ -130,6 +157,7 @@ export default function InventoryDetail() {
                         📦 {allocs.length}
                       </span>
                     )}
+                    {canEdit && <button className="inv-mng" onClick={() => openManage(r)}>Manage</button>}
                   </td>
                 </tr>
               );
@@ -156,8 +184,47 @@ export default function InventoryDetail() {
         </div>
       )}
 
+      {manage && (
+        <div className="inv-overlay" onClick={() => setManage(null)}>
+          <div className="inv-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="inv-mhead"><b>Manage stock</b><button className="secondary" onClick={() => setManage(null)} style={{ marginLeft: 'auto' }}>✕</button></div>
+            <div className="mg-name">{manage.product_name || manage.sku || 'Item'} {manage.sku && <code>{manage.sku}</code>}</div>
+            <div className="mg-onhand">On hand: <b>{manage.quantity ?? 0}</b></div>
+
+            <div className="mg-sec">
+              <label className="inv-f">Load / remove amount<input type="number" min="1" value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="e.g. 10" /></label>
+              <div className="mg-btns">
+                <button onClick={() => doDelta(Math.abs(Number(amt)))} disabled={busy || !(Number(amt) > 0)}>＋ Load</button>
+                <button className="secondary" onClick={() => doDelta(-Math.abs(Number(amt)))} disabled={busy || !(Number(amt) > 0)}>－ Remove</button>
+              </div>
+            </div>
+
+            <div className="mg-sec">
+              <label className="inv-f">Set exact quantity (stock count)<input type="number" min="0" value={setVal} onChange={(e) => setSetVal(e.target.value)} placeholder={String(manage.quantity ?? 0)} /></label>
+              <button className="secondary" onClick={() => patchItem({ quantity: Number(setVal) })} disabled={busy || setVal === ''}>Set</button>
+            </div>
+
+            <div className="mg-sec">
+              <label className="inv-f">Location<input value={mloc} onChange={(e) => setMloc(e.target.value)} placeholder="e.g. Warehouse A" /></label>
+              <button className="secondary" onClick={() => patchItem({ location: mloc })} disabled={busy || mloc === (manage.location || '')}>Save</button>
+            </div>
+
+            <div className="mg-danger"><button className="mg-del" onClick={deleteItem} disabled={busy}>Delete item</button></div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .inv-cats { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+        .inv-mng { font-size:11px; padding:3px 10px; margin-left:8px; }
+        .mg-name { font-size:14px; font-weight:600; margin-top:6px; } .mg-name code { font-size:12px; margin-left:6px; }
+        .mg-onhand { font-size:13px; color:var(--muted); margin:2px 0 4px; }
+        .mg-sec { display:flex; align-items:flex-end; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+        .mg-sec .inv-f { flex:1 1 auto; margin-top:0; }
+        .mg-btns { display:flex; gap:6px; flex:0 0 auto; }
+        .mg-danger { margin-top:14px; }
+        .mg-del { background:var(--bad,#dc2626); color:#fff; }
+        .mg-del:hover { filter:brightness(1.08); }
         .inv-cat { font-size:12px; padding:4px 12px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--ink); cursor:pointer; }
         .inv-cat:hover { border-color:var(--primary); }
         .inv-cat.on { background:var(--primary); color:#fff; border-color:var(--primary); }

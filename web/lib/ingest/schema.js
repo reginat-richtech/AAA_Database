@@ -194,6 +194,9 @@ export async function ensureExtSchema() {
     alter table ext.task alter column status set default 'open';
     alter table ext.task alter column priority set default 'medium';
     update ext.task set status = 'open' where status = 'todo';
+    -- Kanban (ported from old PM tracker): column position + sort order; status derives from column.
+    alter table ext.task add column if not exists column_id text;
+    alter table ext.task add column if not exists position  integer;
     update ext.task set status = 'in_progress' where status = 'blocked';
     update ext.task set priority = 'medium' where priority = 'normal';
 
@@ -216,6 +219,63 @@ export async function ensureExtSchema() {
       updated_at   timestamptz not null default now()
     );
     alter table ext.task_project add column if not exists seeded_at timestamptz;
+
+    -- ── PM tracker (ported from the old repo: Workspace → Sheet → Task) ──────────
+    create table if not exists ext.pm_workspace (
+      id          text primary key,
+      name        text not null,
+      description text,
+      owner_email text not null,
+      icon        text not null default '📋',
+      archived    boolean not null default false,
+      created_at  timestamptz not null default now(),
+      updated_at  timestamptz not null default now()
+    );
+    create table if not exists ext.pm_workspace_member (
+      id           text primary key,
+      workspace_id text not null,
+      user_email   text not null,
+      role         text not null default 'member',   -- owner | admin | member | viewer
+      joined_at    timestamptz not null default now()
+    );
+    create unique index if not exists pm_member_uidx on ext.pm_workspace_member (workspace_id, lower(user_email));
+    create table if not exists ext.pm_sheet (
+      id           text primary key,
+      workspace_id text not null,
+      name         text not null,
+      description  text,
+      columns      jsonb not null default '[{"id":"todo","name":"To Do","color":"#94a3b8"},{"id":"in_progress","name":"In Progress","color":"#3b82f6"},{"id":"review","name":"Review","color":"#f59e0b"},{"id":"done","name":"Done","color":"#22c55e"}]'::jsonb,
+      sort_order   integer not null default 0,
+      archived     boolean not null default false,
+      created_by   text,
+      created_at   timestamptz not null default now(),
+      updated_at   timestamptz not null default now()
+    );
+    create index if not exists pm_sheet_ws_idx on ext.pm_sheet (workspace_id, sort_order);
+    create table if not exists ext.pm_task (
+      id             text primary key,
+      sheet_id       text not null,
+      title          text not null,
+      description    text,
+      status         text not null default 'open',     -- derived from column_id
+      priority       text not null default 'medium',    -- low | medium | high | urgent
+      column_id      text not null default 'todo',
+      position       integer not null default 0,
+      assignee_email text,
+      due_date       date,
+      tags           jsonb not null default '[]'::jsonb,
+      created_by     text,
+      created_at     timestamptz not null default now(),
+      updated_at     timestamptz not null default now()
+    );
+    create index if not exists pm_task_sheet_idx on ext.pm_task (sheet_id, column_id, position);
+    -- A workspace can belong to a department (chosen on create; many per dept allowed).
+    alter table ext.pm_workspace add column if not exists department text;
+    drop index if exists ext.pm_ws_dept_uidx;
+    create index if not exists pm_ws_dept_idx on ext.pm_workspace (department);
+    alter table ext.pm_workspace add column if not exists project_id text;   -- legacy (project link removed)
+    alter table ext.pm_sheet add column if not exists stage_key text;
+    alter table ext.pm_sheet add column if not exists done boolean not null default false;  -- prep-task completion (syncs to Project Tracker)
 
     create table if not exists ext.sync_log (
       id          bigserial primary key,

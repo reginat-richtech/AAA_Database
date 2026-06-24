@@ -86,6 +86,7 @@ export default function HubSpotAI() {
       sheet="HubSpot AI"
       endpoint="/api/ai/hubspot"
       chatScope="Deals · pipeline · CRM · email"
+      domain="hubspot"
       renderLeft={renderLeft}
     />
   );

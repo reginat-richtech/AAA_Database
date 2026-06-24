@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '../../../../lib/access';
 import { query, mutateAs } from '../../../../lib/db';
 import { ensureExtSchema } from '../../../../lib/ingest/schema';
-import { normalizeStatus, normalizePriority, normalizeType, normalizeDepartment } from '../../../../lib/orgRoles';
+import { normalizeStatus, normalizePriority, normalizeType, normalizeDepartment, normalizeColumn, COLUMN_STATUS, STATUS_COLUMN } from '../../../../lib/orgRoles';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const COLS = `id, project_id, title, description, note, type, department, assignee_email, created_by,
-  status, priority, tags, start_date, end_date, due_date, created_at, updated_at`;
+  status, priority, column_id, position, tags, start_date, end_date, due_date, created_at, updated_at`;
 
 async function load(id) {
   const { rows } = await query(`select ${COLS} from ext.task where id = $1`, [id]);
@@ -29,7 +29,12 @@ export async function PATCH(req, { params }) {
   const title = b.title != null ? (String(b.title).trim().slice(0, 200) || task.title) : task.title;
   const description = b.description !== undefined ? (b.description ? String(b.description).slice(0, 4000) : null) : task.description;
   const note = b.note !== undefined ? (b.note ? String(b.note).slice(0, 4000) : null) : task.note;
-  const status = b.status != null ? normalizeStatus(b.status) : task.status;
+  // Kanban: column and status stay in sync (status derives from column, like the old repo).
+  let status = b.status != null ? normalizeStatus(b.status) : task.status;
+  let column_id = b.column_id !== undefined ? normalizeColumn(b.column_id) : (task.column_id || STATUS_COLUMN[task.status] || 'todo');
+  if (b.column_id !== undefined) status = COLUMN_STATUS[column_id] || status;
+  else if (b.status != null) column_id = STATUS_COLUMN[status] || column_id;
+  const position = b.position !== undefined && Number.isFinite(Number(b.position)) ? Number(b.position) : task.position;
   const priority = b.priority != null ? normalizePriority(b.priority) : task.priority;
   const type = b.type !== undefined ? (b.type ? normalizeType(b.type) : null) : task.type;
   const start_date = b.start_date !== undefined ? (b.start_date ? String(b.start_date).slice(0, 10) : null) : task.start_date;
@@ -51,9 +56,9 @@ export async function PATCH(req, { params }) {
   const row = await mutateAs(user.email, async (q) => {
     const { rows } = await q(
       `update ext.task set title=$2, description=$3, note=$4, type=$5, status=$6, priority=$7,
-         start_date=$8, end_date=$9, assignee_email=$10, project_id=$11, department=$12, tags=$13::jsonb, updated_at=now()
+         column_id=$8, position=$9, start_date=$10, end_date=$11, assignee_email=$12, project_id=$13, department=$14, tags=$15::jsonb, updated_at=now()
        where id=$1 returning ${COLS}`,
-      [id, title, description, note, type, status, priority, start_date, end_date, assignee, project_id, department, JSON.stringify(tags)],
+      [id, title, description, note, type, status, priority, column_id, position, start_date, end_date, assignee, project_id, department, JSON.stringify(tags)],
     );
     return rows[0];
   });

@@ -85,6 +85,7 @@ export default function FinanceAI() {
       sheet="Finance AI"
       endpoint="/api/ai/finance"
       chatScope="Invoices · expenses · P&L"
+      domain="finance"
       renderLeft={renderLeft}
     />
   );

@@ -115,8 +115,9 @@ a:hover { text-decoration:underline; }
 
 /* ---- Layout & headings ---------------------------------------------------- */
 .container { max-width:1180px; margin:0 auto; padding:24px 24px 72px; }
-/* inside the shell, main fills the space to the right of the sidebar */
-.shell > .container { flex:1 1 auto; min-width:0; margin:0; }
+/* inside the shell, main fills the full width to the right of the sidebar
+   (no 1180px cap) so wide monitors aren't left with empty space on the right */
+.shell > .container { flex:1 1 auto; min-width:0; margin:0; max-width:none; padding:24px 32px 72px; }
 h1 { font-family:var(--font-head); font-size:24px; margin:0 0 4px; letter-spacing:-.01em; }
 h2 { font-family:var(--font-head); font-size:16px; margin:26px 0 12px; }
 h3 { font-family:var(--font-head); font-size:14px; margin:16px 0 8px; }
