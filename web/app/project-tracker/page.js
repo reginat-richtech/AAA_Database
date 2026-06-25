@@ -31,7 +31,7 @@ export default function ProjectTracker() {
 
   return (
     <>
-      <PageHeader title="Project Tracker" sub="Read-only workflow tree per project. Each agreement advances through 9 stages as its tech request, approval, confirmation, and travel steps complete." sheet="Project Tracker" />
+      <PageHeader title="Project Tracker" sub="Read-only workflow tree per project. Each agreement advances through 9 stages as its tech request, approval, and confirmation steps complete." sheet="Project Tracker" />
 
       <section className="panel">
         <div className="panel-title"><h2>Project process tracker</h2><span className="meta">9 stages · red → blue</span></div>
@@ -81,7 +81,7 @@ export default function ProjectTracker() {
               {p.so_number && <span>SO {p.so_number}</span>}
               {p.created_at && <span>📅 {new Date(p.created_at).toLocaleDateString()}</span>}
               <span className="pc-link" onClick={(e) => e.stopPropagation()}>
-                <Link href={`/tech-request?agreement=${p.id}`}>Tech Request ↗</Link>
+                {!p.is_proposal_only && <Link href={`/tech-request?agreement=${p.id}`}>Tech Request ↗</Link>}
                 {p.jotform_url && <> · <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm ↗</a></>}
                 {p.calendar_link && <> · <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar ↗</a></>}
               </span>

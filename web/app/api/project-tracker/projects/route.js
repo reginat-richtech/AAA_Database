@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query } from '../../../../lib/db';
-import { PROJECT_STAGES, normSo, buildProject } from '../../../../lib/projectStages';
+import { PROJECT_STAGES, normSo, normName, buildProject, buildProposalProject } from '../../../../lib/projectStages';
 import { requireUser, visibilitySql } from '../../../../lib/access';
 
 export const runtime = 'nodejs';
@@ -36,29 +36,55 @@ export async function GET() {
   const confBySo = {};
   for (const c of confs) { const k = normSo(c.so_number); if (!(k in confBySo)) confBySo[k] = c; }
 
-  // Stage-webhook events: travel approvals (matched by SO number) and manager
-  // approvals (matched by the JotForm submission id we stored when finalizing).
-  const ev = (await query('select submission_id, stage, payload from ops.jotform_stage_event')).rows;
-  const travel = new Set();
-  const approvedSubIds = new Set();
-  for (const e of ev) {
-    if (String(e.stage || '').startsWith('travel')) {
-      const so = e.payload?.so_number || e.payload?.so || e.submission_id;
-      if (so) travel.add(normSo(so));
-    }
-    if (e.stage === 'approved' && e.submission_id) approvedSubIds.add(String(e.submission_id));
-  }
+  // Stage-webhook events: manager approvals (matched by the JotForm submission id
+  // we stored when finalizing). Travel approvals now live in ops.travel_request and
+  // are tracked by the standalone /travel-requests page, not the Project Tracker.
+  const approvedSubIds = new Set(
+    (await query(
+      `select submission_id from ops.jotform_stage_event where stage = 'approved' and submission_id is not null`
+    )).rows.map((r) => String(r.submission_id))
+  );
 
+  // Final Proposal Form submissions — the project's entry point (they precede
+  // the agreement). Latest per normalized customer name wins for best-effort
+  // matching to an agreement; unmatched ones become standalone stage-0 projects.
+  // Degrade gracefully if ops.project_proposal isn't migrated yet (0170) so the
+  // tracker still renders agreements rather than 500ing the whole page.
+  let proposals = [];
+  try {
+    proposals = (await query(
+      `select id, contract_number, project_name, customer_name, customer_email,
+              sales_name, sales_email, deployment_url, site_survey_url, site_survey_done,
+              predeploy_review_done, project_info, package_list, created_at
+       from ops.project_proposal order by created_at desc`
+    )).rows;
+  } catch (e) {
+    console.warn('[project-tracker] ops.project_proposal unavailable — run migration 0170 to enable proposals:', e.message);
+  }
+  const propByCustomer = {};
+  for (const p of proposals) { const k = normName(p.customer_name); if (k && !(k in propByCustomer)) propByCustomer[k] = p; }
+
+  const matchedProposalIds = new Set();
   const projects = agreements.map((a) => {
     const sub = subByAg[a.id] || null;
     const so = sub?.answers?.so_number;
     const conf = so ? confBySo[normSo(so)] : null;
-    return buildProject(a, sub, conf, travel, approvedSubIds);
+    const proposal = propByCustomer[normName(a.counterparty)] || null;
+    if (proposal) matchedProposalIds.add(proposal.id);
+    return buildProject(a, sub, conf, approvedSubIds, proposal);
   });
+
+  // Unmatched proposals stand on their own as stage-0 entry points (owner = the
+  // salesperson; admins see all), listed ahead of agreement-rooted projects.
+  const proposalOnly = proposals
+    .filter((p) => !matchedProposalIds.has(p.id))
+    .filter((p) => user.isAdmin || (p.sales_email && p.sales_email.toLowerCase() === user.email))
+    .map(buildProposalProject);
+  const allProjects = [...proposalOnly, ...projects];
 
   const counts = {};
   for (const s of PROJECT_STAGES) counts[s.key] = 0;
-  for (const p of projects) counts[p.stage_key] = (counts[p.stage_key] || 0) + 1;
+  for (const p of allProjects) counts[p.stage_key] = (counts[p.stage_key] || 0) + 1;
 
-  return NextResponse.json({ stages: PROJECT_STAGES, projects, counts, count: projects.length });
+  return NextResponse.json({ stages: PROJECT_STAGES, projects: allProjects, counts, count: allProjects.length });
 }

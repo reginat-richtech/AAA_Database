@@ -87,6 +87,36 @@ export function parseTRF(raw) {
   return { email, name, depart, ret };
 }
 
+// Map a live JotForm TRF submission (answers keyed by question-id, as returned by
+// lib/jotform.getJotformSubmission) into the columns ops.travel_request stores.
+// Known TRF fields by `name`: requestersName · companyEmail · departureDate ·
+// returnDate · soOr. Destination/purpose are matched heuristically (the form may
+// or may not have them). Everything degrades to '' / null when absent.
+export function parseTRFSubmission(answers) {
+  const a = answers || {};
+  const byName = {};
+  for (const x of Object.values(a)) if (x && x.name) byName[norm(x.name)] = x;
+  const fullname = (v) => (v && typeof v === 'object' ? [v.first, v.last].filter(Boolean).join(' ') : String(v || ''));
+  const val = (x) => (x ? (x.answer ?? x.prettyFormat ?? '') : '');
+
+  const traveler = fullname(val(byName.requestersname)).trim();
+  const email = norm((String(val(byName.companyemail)).match(EMAIL_RE) || [''])[0]);
+  const start_date = toISO(val(byName.departuredate)) || null;
+  const end_date = toISO(val(byName.returndate)) || null;
+  const so_number = String(val(byName.soor) || '').trim() || null;
+
+  // Heuristics for fields whose exact name we don't pin down.
+  let destination = '', purpose = '';
+  for (const x of Object.values(a)) {
+    const label = norm(x?.name) + ' ' + norm(x?.text);
+    const flat = typeof x?.answer === 'string' ? x.answer : '';
+    if (!flat) continue;
+    if (!destination && (label.includes('destination') || label.includes('city') || label.includes('location') || label.includes('where'))) destination = flat.trim();
+    if (!purpose && (label.includes('purpose') || label.includes('reason') || label.includes('description') || label.includes('detail'))) purpose = flat.trim();
+  }
+  return { traveler: traveler || null, email: email || null, destination: destination || null, purpose: purpose || null, start_date, end_date, so_number };
+}
+
 // Read TRF submissions from the synced DB. Keep only ACTIVE, non-denied requests
 // (matches the old app's _find_trf_match candidate filter).
 export async function fetchTravelRequests() {
