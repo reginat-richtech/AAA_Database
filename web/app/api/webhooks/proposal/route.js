@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { query } from '../../../../lib/db';
 import { getJotformSubmission } from '../../../../lib/jotform';
 import { extractPackageList, extractPackageListFromFile } from '../../../../lib/ai/extractPackages';
@@ -69,16 +69,11 @@ function fileUrl(answers, qid) {
   return String(v || a.prettyFormat || '').trim();
 }
 
-async function parseProposal(answers) {
-  const project_info = text(answers, QID.project_info);
+// Fast, synchronous parse — NO AI here. The slow Packing-List read+translate runs
+// in after() (post-response) so the webhook replies in ~1s and JotForm's workflow
+// webhook step doesn't time out (it was hanging on a ~17s response).
+function parseProposal(answers) {
   const completed = checked(answers, QID.completion); // single combined checkbox
-  const packing_list_url = fileUrl(answers, QID.packing_list_file);
-
-  // Inventory list: prefer the uploaded Packing List file (AI reads + translates
-  // it); fall back to the free-text Project Information when no usable file exists.
-  let package_list = await extractPackageListFromFile(packing_list_url);
-  if (!package_list || package_list.length === 0) package_list = await extractPackageList(project_info);
-
   return {
     contract_number: text(answers, QID.contract_number),
     project_name: text(answers, QID.project_name),
@@ -91,13 +86,12 @@ async function parseProposal(answers) {
     tech_lead_name: text(answers, QID.tech_lead_name),
     tech_lead_email: text(answers, QID.tech_lead_email),
     address: address(answers, QID.address),
-    project_info,
+    project_info: text(answers, QID.project_info),
     site_survey_done: completed,
     predeploy_review_done: completed,
     site_survey_url: fileUrl(answers, QID.site_survey_file),
     deployment_url: fileUrl(answers, QID.deployment_file),
-    packing_list_url,
-    package_list: package_list || [],
+    packing_list_url: fileUrl(answers, QID.packing_list_file),
   };
 }
 
@@ -136,7 +130,7 @@ async function handle(request) {
   const fetched = await getJotformSubmission(submissionId);
   let p;
   if (fetched.ok) {
-    p = await parseProposal(fetched.answers);
+    p = parseProposal(fetched.answers);
     if (!formId) formId = fetched.form_id;
   } else {
     p = {
@@ -164,7 +158,9 @@ async function handle(request) {
          site_survey_done = excluded.site_survey_done, predeploy_review_done = excluded.predeploy_review_done,
          site_survey_url = excluded.site_survey_url, deployment_url = excluded.deployment_url,
          packing_list_url = excluded.packing_list_url,
-         package_list = excluded.package_list, payload = excluded.payload`
+         payload = excluded.payload`
+         // package_list is intentionally NOT updated here — it's filled by the
+         // post-response after() block, so a re-fire never wipes it back to [].
     : 'do nothing'; // a failed re-read must not wipe a previously captured row
 
   await query(
@@ -180,13 +176,29 @@ async function handle(request) {
       p.sales_name, p.sales_email, p.pm_name, p.pm_email, p.tech_lead_name, p.tech_lead_email,
       p.address, p.project_info, p.site_survey_done, p.predeploy_review_done,
       p.site_survey_url, p.deployment_url, p.packing_list_url,
-      JSON.stringify(p.package_list || []), JSON.stringify(rawPayload),
+      '[]', JSON.stringify(rawPayload),
     ],
   );
 
+  // Slow part (download Packing List PDF + AI read/translate) runs AFTER the
+  // response is flushed, then back-fills package_list. Keeps the webhook ~1s so
+  // JotForm's approval workflow doesn't hang on the webhook step.
+  if (fetched.ok && (p.packing_list_url || p.project_info)) {
+    after(async () => {
+      try {
+        let pkgs = await extractPackageListFromFile(p.packing_list_url);
+        if (!pkgs || !pkgs.length) pkgs = await extractPackageList(p.project_info);
+        if (pkgs && pkgs.length) {
+          await query('update ops.project_proposal set package_list = $2 where submission_id = $1',
+            [submissionId, JSON.stringify(pkgs)]);
+        }
+      } catch { /* best-effort: a missing package list never breaks capture */ }
+    });
+  }
+
   return NextResponse.json({
     ok: true, recorded: true, submission_id: submissionId,
-    customer: p.customer_name || null, packages: (p.package_list || []).length, captured: fetched.ok,
+    customer: p.customer_name || null, packages: 'extracting', captured: fetched.ok,
   });
 }
 
