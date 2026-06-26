@@ -103,6 +103,12 @@ async function handle(request) {
   }
   let formId = pick('formID', 'form_id', 'formId');
 
+  // Approve vs deny: wire the Approval Flow's Approve step to ?decision=approved
+  // (or omit — approved is the default) and the Deny step to ?decision=denied.
+  // The Project Tracker only completes Confirmation/Prep on an APPROVED row; a
+  // denied one shows "❌ Denied — resubmit to re-confirm" and reopens on redo.
+  const decision = /den|reject/i.test(String(pick('decision', 'stage') || '')) ? 'denied' : 'approved';
+
   // Auto-capture: read the submission back and parse by qid. Best-effort — if the
   // API read fails (no key / transient), fall back to any params on the request
   // and DON'T clobber an existing good row.
@@ -118,6 +124,7 @@ async function handle(request) {
       technicians: [], _fetch_error: fetched.error || fetched.skipped || 'unknown',
     };
   }
+  payload.decision = decision;
 
   const conflict = fetched.ok
     ? `do update set form_id = coalesce(excluded.form_id, ops.tech_confirmation.form_id),
@@ -131,7 +138,7 @@ async function handle(request) {
   );
 
   return NextResponse.json({
-    ok: true, recorded: true, submission_id: submissionId,
+    ok: true, recorded: true, submission_id: submissionId, decision,
     so_number: payload.so_number || null, captured: fetched.ok,
   });
 }

@@ -18,10 +18,43 @@ export default function ProjectTracker() {
   const [data, setData] = useState({ stages: [], projects: [], counts: {} });
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null); // { pid, text, err }
+  const [confirmReq, setConfirmReq] = useState(null); // { p, t } — approval awaiting confirmation
 
-  useEffect(() => {
-    fetch('/api/project-tracker/projects').then((r) => r.json()).then(setData).catch(() => {});
-  }, []);
+  const refresh = () => fetch('/api/project-tracker/projects').then((r) => r.json()).then(setData).catch(() => {});
+  useEffect(() => { refresh(); }, []);
+
+  // Mark / un-mark one Team-Preparation step (manager of that dept, or admin).
+  async function markPrep(p, t) {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/project-tracker/prep', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: p.id, prep_key: t.prep_key, done: t.status !== 'done' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setMsg({ pid: p.id, err: j.error || `Failed (HTTP ${r.status})` });
+      else { await refresh(); setMsg({ pid: p.id, text: `${t.label}: ${j.step?.done ? 'marked done' : 'reopened'}.` }); }
+    } finally { setBusy(false); }
+  }
+
+  // Send the Technician Confirmation form once prep is done (calendar skipped).
+  async function sendConfirmation(p) {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/project-tracker/confirmation-send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: p.id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg({ pid: p.id, err: j.error || `Failed (HTTP ${r.status})` }); return; }
+      const n = j.notify || {};
+      const note = n.sent ? `emailed to ${n.to}` : n.error ? `email error: ${n.error}`
+        : n.skipped ? `email skipped (${n.skipped}) — use “open form”` : 'sent';
+      setMsg({ pid: p.id, text: `Technician Confirmation form: ${note}.` });
+    } finally { setBusy(false); }
+  }
 
   const projects = data.projects.filter((p) => {
     if (!q) return true;
@@ -93,6 +126,9 @@ export default function ProjectTracker() {
 
             {isOpen && (
               <div className="tree" onClick={(e) => e.stopPropagation()}>
+                {msg && msg.pid === p.id && (
+                  <p className="note" style={{ color: msg.err ? 'crimson' : 'green', margin: '0 0 8px' }}>{msg.err || msg.text}</p>
+                )}
                 {p.nodes.map((n, i) => (
                   <div className="tnode" key={n.key}>
                     <div className="h"><span className="dot" style={dotStyle(n, STAGE_RAMP[i])} /> {i + 1}. {n.label} <span className="note" style={{ fontWeight: 400 }}>· {n.status}</span></div>
@@ -100,8 +136,20 @@ export default function ProjectTracker() {
                       <div className="tleaf" key={j}>
                         <span className="s">{LEAF_ICON[t.status]}</span>
                         <span>{t.label}{t.detail ? <span className="d"> — {t.detail}</span> : null}{t.doc ? <> · <a href={t.doc.preview} target="_blank" rel="noreferrer" title="Preview document">{t.doc.name}</a> · <a href={t.doc.download} title="Download document">Download</a></> : t.url ? <> · <a href={t.url} target="_blank" rel="noreferrer">link</a></> : null}</span>
+                        {t.prep_key && (t.can_mark
+                          ? <button className={`btn-sm${t.status === 'done' ? ' secondary' : ''}`} style={{ marginLeft: 8 }} disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); t.status === 'done' ? markPrep(p, t) : setConfirmReq({ p, t }); }}>
+                              {t.status === 'done' ? 'Unmark' : 'Approve'}
+                            </button>
+                          : t.status !== 'done' ? <span className="note" style={{ marginLeft: 8 }}>· {t.department} manager only</span> : null)}
                       </div>
                     ))}
+                    {n.key === 'prep' && p.prep_all_done && !p.confirmation_done && (
+                      <div className="tleaf" style={{ marginTop: 6 }}>
+                        <button className="btn-sm" disabled={busy} onClick={(e) => { e.stopPropagation(); sendConfirmation(p); }}>Send form ↗</button>
+                        <a href="https://form.jotform.com/261615438877065" target="_blank" rel="noreferrer" style={{ marginLeft: 10 }}>open form</a>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -109,6 +157,37 @@ export default function ProjectTracker() {
           </div>
         );
       })}
+
+      {confirmReq && (
+        <div className="pt-backdrop" onClick={() => setConfirmReq(null)}>
+          <div className="pt-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Ready to move to the next step?</h3>
+            <p className="note" style={{ margin: '0 0 6px' }}>Please confirm your team has finished this preparation step. Once every team confirms its part, the project can move on to the next step together. We’ll record this under your name and the current time.</p>
+            <ul className="pt-info">
+              <li><span>Step</span><b>{confirmReq.t.label}</b></li>
+              <li><span>Department</span><b>{confirmReq.t.department}</b></li>
+              <li><span>Project</span><b>{confirmReq.p.project_number}</b></li>
+              <li><span>Customer</span><b>{confirmReq.p.counterparty || confirmReq.p.title || '—'}</b></li>
+            </ul>
+            <div className="pt-actions">
+              <button className="secondary btn-sm" disabled={busy} onClick={() => setConfirmReq(null)}>Not yet</button>
+              <button className="btn-sm" disabled={busy} onClick={async () => { const { p, t } = confirmReq; setConfirmReq(null); await markPrep(p, t); }}>Yes, we’re done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .btn-sm { padding:3px 10px; font-size:12px; border-radius:6px; }
+        .pt-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+        .pt-modal { background:#fff; border-radius:12px; padding:20px 22px; max-width:440px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.28); }
+        .pt-modal h3 { margin:0 0 8px; font-size:16px; }
+        .pt-info { list-style:none; margin:14px 0 0; padding:0; border-top:1px dashed var(--line); }
+        .pt-info li { display:flex; justify-content:space-between; gap:18px; padding:8px 0; border-bottom:1px dashed var(--line); font-size:13px; }
+        .pt-info li span { color:var(--muted); }
+        .pt-info li b { text-align:right; }
+        .pt-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+      `}</style>
     </>
   );
 }

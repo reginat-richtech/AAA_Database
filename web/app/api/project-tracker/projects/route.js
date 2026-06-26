@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { query } from '../../../../lib/db';
 import { PROJECT_STAGES, normSo, normName, buildProject, buildProposalProject } from '../../../../lib/projectStages';
 import { requireUser, visibilitySql } from '../../../../lib/access';
+import { PREP_AUTO_TASKS } from '../../../../lib/orgRoles';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,14 +37,21 @@ export async function GET() {
   const confBySo = {};
   for (const c of confs) { const k = normSo(c.so_number); if (!(k in confBySo)) confBySo[k] = c; }
 
-  // Stage-webhook events: manager approvals (matched by the JotForm submission id
-  // we stored when finalizing). Travel approvals now live in ops.travel_request and
-  // are tracked by the standalone /travel-requests page, not the Project Tracker.
-  const approvedSubIds = new Set(
-    (await query(
-      `select submission_id from ops.jotform_stage_event where stage = 'approved' and submission_id is not null`
-    )).rows.map((r) => String(r.submission_id))
-  );
+  // Stage-webhook events: manager approve/deny decisions (matched by the JotForm
+  // submission id we stored when finalizing). The LATEST decision per submission
+  // wins, so a deny after an approve (or a re-approve after a deny) reflects
+  // correctly. Travel lives in ops.travel_request / the /travel-requests page now.
+  const decisions = (await query(
+    `select submission_id, stage, received_at from ops.jotform_stage_event
+      where stage in ('approved','denied') and submission_id is not null`
+  )).rows;
+  const latest = {};
+  for (const e of decisions) {
+    const k = String(e.submission_id);
+    if (!latest[k] || e.received_at > latest[k].at) latest[k] = { stage: e.stage, at: e.received_at };
+  }
+  const approvedSubIds = new Set(Object.keys(latest).filter((k) => latest[k].stage === 'approved'));
+  const deniedSubIds = new Set(Object.keys(latest).filter((k) => latest[k].stage === 'denied'));
 
   // Final Proposal Form submissions — the project's entry point (they precede
   // the agreement). Latest per normalized customer name wins for best-effort
@@ -64,6 +72,37 @@ export async function GET() {
   const propByCustomer = {};
   for (const p of proposals) { const k = normName(p.customer_name); if (k && !(k in propByCustomer)) propByCustomer[k] = p; }
 
+  // Team-Preparation tasks (the 3 department prep steps live in ext.task as
+  // auto_key rows). Each step is markable only by that department's manager or an
+  // admin; here we read each step's status + who marked it. Degrades to none if
+  // ext.task isn't present yet.
+  const prepByProject = {};
+  try {
+    const prepRows = (await query(
+      `select id, project_id, auto_key, status, done_by_name, done_by_email, done_at
+         from ext.task where auto_key is not null`
+    )).rows;
+    for (const r of prepRows) {
+      if (!prepByProject[r.project_id]) prepByProject[r.project_id] = {};
+      prepByProject[r.project_id][r.auto_key] = r;
+    }
+  } catch { /* ext.task not migrated yet */ }
+
+  const prepFor = (agreementId) => ({
+    steps: PREP_AUTO_TASKS.map((pt) => {
+      const t = prepByProject[String(agreementId)]?.[pt.key] || null;
+      return {
+        key: pt.key, title: pt.title, department: pt.department,
+        task_id: t?.id || null,
+        done: t?.status === 'done',
+        done_by_name: t?.done_by_name || null,
+        done_by_email: t?.done_by_email || null,
+        done_at: t?.done_at || null,
+        can_mark: user.isAdmin || (user.title === 'manager' && user.department === pt.department),
+      };
+    }),
+  });
+
   const matchedProposalIds = new Set();
   const projects = agreements.map((a) => {
     const sub = subByAg[a.id] || null;
@@ -71,7 +110,7 @@ export async function GET() {
     const conf = so ? confBySo[normSo(so)] : null;
     const proposal = propByCustomer[normName(a.counterparty)] || null;
     if (proposal) matchedProposalIds.add(proposal.id);
-    return buildProject(a, sub, conf, approvedSubIds, proposal);
+    return buildProject(a, sub, conf, approvedSubIds, proposal, deniedSubIds, prepFor(a.id));
   });
 
   // Unmatched proposals stand on their own as stage-0 entry points (owner = the

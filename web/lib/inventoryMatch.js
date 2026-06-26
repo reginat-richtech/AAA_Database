@@ -21,24 +21,43 @@ function skuIn(text) {
   return null;
 }
 
-// Fraction of the item's tokens that appear in a stock row (name+line+sku).
-function score(itemToks, row) {
-  if (!itemToks.length) return 0;
-  const hay = toks(`${row.product_name} ${row.product_line} ${row.sku}`);
-  let hit = 0;
-  for (const t of itemToks) if (hay.some((h) => h === t || h.includes(t) || t.includes(h))) hit++;
-  return hit / itemToks.length;
+// Two tokens "match" if equal, or one contains the other (min length 3 to avoid
+// junk 2-char hits like "se"). e.g. "360mm" ~ "360", "cup" ~ "cups".
+function tokenMatch(a, b) {
+  if (a === b) return true;
+  if (a.length >= 3 && b.includes(a)) return true;
+  if (b.length >= 3 && a.includes(b)) return true;
+  return false;
 }
 
-const MIN_SCORE = 0.5;
+// Word similarity between the package item and a stock row's PRODUCT NAME, as a
+// symmetric Dice coefficient over their meaningful tokens:  2·|shared| / (|item|+|name|).
+// Symmetric on purpose: an exact/near-exact name scores 1.0, while a name padded
+// with extra words scores lower — so ranking is purely by how alike the WORDS are,
+// never by how many units are in stock. Excludes product_line/sku (the brand repeats
+// across a whole line); explicit SKU codes are matched outright in step 1.
+function similarity(itemToks, rowToks) {
+  if (!itemToks.length || !rowToks.length) return 0;
+  let shared = 0;
+  for (const t of itemToks) if (rowToks.some((h) => tokenMatch(t, h))) shared++;
+  return (2 * shared) / (itemToks.length + rowToks.length);
+}
+
+const MIN_SCORE = 0.4;
 
 // → [{ item, notes, needed, match: {id, sku, product_name, product_line}|null,
 //      onHand, shortfall, status, confidence }]
 // status: in_stock | short | out | no_match
 export function matchPackageList(packageList, stockRows) {
-  const stock = Array.isArray(stockRows) ? stockRows : [];
+  const all = Array.isArray(stockRows) ? stockRows : [];
+  // RaaS (Robot-as-a-Service) rows are service/lease SKUs, not physical stock to
+  // pick — exclude them so they're never recommended.
+  const stock = all.filter((r) => !/raas/i.test(String(r.product_name || '')));
   const bySku = new Map();
   for (const r of stock) if (r.sku) bySku.set(String(r.sku).toUpperCase(), r);
+
+  // Pre-tokenize each stock row's product name once.
+  const stockToks = stock.map((r) => ({ r, toks: toks(r.product_name) }));
 
   return (Array.isArray(packageList) ? packageList : []).map((pkg) => {
     const item = String(pkg?.item || '').trim();
@@ -52,16 +71,18 @@ export function matchPackageList(packageList, stockRows) {
     const coded = skuIn(`${item} ${notes}`);
     if (coded && bySku.has(coded)) { match = bySku.get(coded); confidence = 1; }
 
-    // 2) Otherwise the best name match (prefer finished goods, then more in stock).
+    // 2) Otherwise the best WORD-SIMILARITY match. Ranked by similarity only;
+    //    inventory count is never used. Ties prefer a finished good, then the more
+    //    specific (shorter) product name.
     if (!match) {
       const itemToks = toks(item);
-      const scored = stock
-        .map((r) => ({ r, s: score(itemToks, r) }))
+      const scored = stockToks
+        .map((x) => ({ r: x.r, s: similarity(itemToks, x.toks) }))
         .filter((x) => x.s >= MIN_SCORE)
         .sort((a, b) =>
           b.s - a.s
           || ((b.r.item_class === 'finished_goods') - (a.r.item_class === 'finished_goods'))
-          || ((Number(b.r.quantity) || 0) - (Number(a.r.quantity) || 0)));
+          || (String(a.r.product_name || '').length - String(b.r.product_name || '').length));
       if (scored.length) { match = scored[0].r; confidence = scored[0].s; }
     }
 

@@ -112,7 +112,8 @@ async function handle(request) {
     } else {
       await query(
         `insert into ops.jotform_stage_event (form_id, submission_id, stage, payload)
-         values ($1,$2,$3,$4) on conflict (submission_id, stage) do nothing`,
+         values ($1,$2,$3,$4)
+         on conflict (submission_id, stage) do update set payload = excluded.payload, received_at = now()`,
         [form_id, submission_id, stage, JSON.stringify(payload)],
       );
     }

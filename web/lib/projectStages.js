@@ -94,7 +94,7 @@ function proposalTasks(proposal) {
   ];
 }
 
-export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null) {
+export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null, deniedSubmissionIds = new Set(), prep = null) {
   const ann = (submission && submission.answers) || {};
   const appr = ann._approval || null;
   const cal = ann._calendar || null;
@@ -102,6 +102,11 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
   const emailsSent = (ann._emails || []).filter((e) => e && e.sent).length;
   const conf = confirmation || null;
   const confPayload = (conf && conf.payload) || {};
+  // A confirmation is "done" only when its latest decision is approved. Legacy rows
+  // with no decision are treated as approved (back-compat). A denied confirmation
+  // reopens when the form is resubmitted (a new submission row supersedes it).
+  const confDenied = !!conf && confPayload.decision === 'denied';
+  const confApproved = !!conf && !confDenied;
   const so = ann.so_number || '';
 
   // Manager approval is satisfied by the in-app "Approve & schedule" (status=approved)
@@ -110,14 +115,24 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
   const jfSubId = jf?.submission_id || jf?.submissionID || null;
   const jotformApproved = !!(jfSubId && approvedSubmissionIds.has(String(jfSubId)));
   const managerApproved = submission?.status === 'approved' || jotformApproved;
+  // Latest manager decision was a denial (and not since re-approved). Redoing the
+  // tech request re-finalizes it → a new JotForm submission id → this clears and
+  // the review reopens as pending.
+  const managerDenied = !managerApproved && !!(jfSubId && deniedSubmissionIds.has(String(jfSubId)));
+
+  // Team Preparation is done when all 3 department prep tasks are marked done by
+  // their managers/admin (or a confirmation already exists, i.e. we're past it).
+  // Gated behind manager approval so prep can't "complete" before the review step.
+  const prepSteps = (prep && Array.isArray(prep.steps)) ? prep.steps : [];
+  const prepAllDone = prepSteps.length === 3 && prepSteps.every((s) => s.done);
 
   const done = {
     proposal: !!proposal,
     agreement: true,
     request: ['finalized', 'approved'].includes(submission?.status),
     review: managerApproved,
-    prep: !!conf,
-    confirmation: !!conf,
+    prep: confApproved || (managerApproved && prepAllDone),
+    confirmation: confApproved,
   };
 
   // current stage = furthest tracked node that is done
@@ -144,20 +159,41 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
         ];
       case 'review':
         return [
-          task('Manager approval', managerApproved, appr ? `by ${appr.approved_by} · ${(appr.approved_at || '').slice(0, 10)}` : (jotformApproved ? 'Approved in JotForm' : null)),
+          task('Manager approval', managerApproved,
+            appr ? `by ${appr.approved_by} · ${(appr.approved_at || '').slice(0, 10)}`
+              : jotformApproved ? 'Approved in JotForm'
+                : managerDenied ? '❌ Denied in JotForm — edit & resubmit to re-review'
+                  : null),
           task('Team & sales notified', emailsSent > 0, emailsSent ? `${emailsSent} email(s) sent` : null),
         ];
-      case 'prep':
-        return [
-          task('Shipping preparation', null),
-          task('Prepare & test equipment', null), task('Customer communication (PM)', null),
-          task('Calendar invite created', !!cal?.html_link, cal?.date, cal?.html_link),
-        ];
+      case 'prep': {
+        const rows = prepSteps.length
+          ? prepSteps.map((s) => ({
+              label: s.title,
+              status: s.done ? 'done' : 'pending',
+              detail: s.done
+                ? `by ${s.done_by_name || s.done_by_email || 'someone'}${s.done_at ? ` · ${String(s.done_at).slice(0, 10)}` : ''}`
+                : `${s.department} dept`,
+              url: null, doc: null,
+              // Extra fields the tracker UI uses to render a mark-done control:
+              prep_key: s.key, task_id: s.task_id || null, department: s.department,
+              can_mark: !!s.can_mark,
+              done_by_name: s.done_by_name || null, done_by_email: s.done_by_email || null, done_at: s.done_at || null,
+            }))
+          : [
+              task('Shipping preparation', null),
+              task('Prepare & test equipment', null),
+              task('Customer communication (PM)', null),
+            ];
+        rows.push(task('Calendar invite (skipped for now)', null));
+        return rows;
+      }
       case 'confirmation':
         return [
-          task('Technicians assigned', !!conf, (confPayload.technicians || []).join(', ') || null),
-          task('Confirmation form approved', !!conf, confPayload.team || null),
-          task('Technicians arrival date set', !!confPayload.fly_out, confPayload.fly_out ? `out ${confPayload.fly_out} → back ${confPayload.fly_back || '?'}` : null),
+          task('Technicians assigned', confApproved, (confPayload.technicians || []).join(', ') || null),
+          task('Confirmation form approved', confApproved,
+            confDenied ? '❌ Denied in JotForm — resubmit to re-confirm' : (confApproved ? (confPayload.team || null) : null)),
+          task('Technicians arrival date set', confApproved && !!confPayload.fly_out, confPayload.fly_out ? `out ${confPayload.fly_out} → back ${confPayload.fly_back || '?'}` : null),
         ];
       case 'closure':
         return [task('Onsite installation', null), task('Install checklist', null), task('Customer sign-off', null), task('Project complete', null)];
@@ -186,6 +222,7 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     salesman_name: a.salesman_name, salesman_email: a.salesman_email, so_number: so,
     created_at: a.created_at, stage: stageIdx, stage_key: stageKey,
     jotform_url: jf?.url || null, calendar_link: cal?.html_link || null,
+    prep_all_done: prepAllDone, confirmation_done: !!conf,
     nodes,
   };
 }

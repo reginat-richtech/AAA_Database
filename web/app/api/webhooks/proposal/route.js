@@ -16,9 +16,13 @@ export const dynamic = 'force-dynamic';
 // No side-effects beyond capture + a best-effort AI extraction (which degrades
 // to an empty list); scheduling/approval logic stays in JotForm.
 
-// Question-id map for the PROJECT FINAL PROPOSAL FORM (261735294288165),
-// verified against the live form via the JotForm API.
-const QID = {
+// This step-1 webhook serves TWO different "final" forms that both create a
+// project entry point in ops.project_proposal:
+//   * installation projects → PROJECT FINAL PROPOSAL FORM (261735294288165)
+//   * event/rental projects → EVENT / RENTAL FORM (241075943618158)
+// Each has its own question-id layout (verified against the live forms). A missing
+// key ('') is safe — the readers just return '' / false for it.
+const QID_INSTALL = {
   contract_number: '157', project_name: '158',
   customer_name: '159', customer_email: '183',
   sales_name: '161', sales_email: '184',
@@ -32,6 +36,36 @@ const QID = {
   // single flag drives BOTH done-columns in the schema.
   completion: '172',
 };
+// Event / Rental Form. No file uploads on this form, so the package list comes
+// from its free-text robot / ingredient / furniture fields (EVENT_PKG_QIDS).
+const QID_EVENT = {
+  contract_number: '67',           // SO#
+  project_name: '21',              // Name of Event
+  customer_name: '74',             // Direct Client (company on the contract)
+  customer_email: '6',             // E-mail
+  sales_name: '95',                // Your Name
+  sales_email: '103',              // Your Email
+  pm_name: '38', pm_email: '',     // Onsite Contact (closest analog)
+  tech_lead_name: '', tech_lead_email: '',
+  address: '4',                    // Delivery Address
+  project_info: '58',              // General Notes (Description)
+  site_survey_file: '', deployment_file: '', packing_list_file: '',
+  completion: '',                  // events have no site-survey/pre-deploy step
+};
+const EVENT_FORM_ID = '241075943618158';
+const EVENT_PKG_QIDS = ['78', '101', '58', '55', '36']; // robots, ingredients, notes, furniture, special req
+
+// Which form's field map to use. An explicit ?form=installation|event on the
+// webhook URL WINS (so the two forms have distinct URLs and parsing is
+// deterministic even if the JotForm formID/read-back is missing); otherwise we
+// fall back to detecting by the form id. Returns 'event' | 'installation'.
+function formKindOf(param, formId) {
+  const k = String(param || '').toLowerCase();
+  if (k === 'event' || k === 'rental') return 'event';
+  if (k === 'installation' || k === 'install' || k === 'proposal') return 'installation';
+  return String(formId) === EVENT_FORM_ID ? 'event' : 'installation';
+}
+const qidMapFor = (kind) => (kind === 'event' ? QID_EVENT : QID_INSTALL);
 
 const ans = (answers, qid) => {
   const a = answers?.[qid];
@@ -72,26 +106,35 @@ function fileUrl(answers, qid) {
 // Fast, synchronous parse — NO AI here. The slow Packing-List read+translate runs
 // in after() (post-response) so the webhook replies in ~1s and JotForm's workflow
 // webhook step doesn't time out (it was hanging on a ~17s response).
-function parseProposal(answers) {
-  const completed = checked(answers, QID.completion); // single combined checkbox
+function parseProposal(answers, kind) {
+  const M = qidMapFor(kind);
+  const isEvent = kind === 'event';
+  const completed = M.completion ? checked(answers, M.completion) : false;
+  // Free-text source for the inventory/package extraction. The Event Form has no
+  // Packing List upload, so combine its robot / ingredient / furniture fields;
+  // installation forms fall back to Project Information.
+  const pkg_text = isEvent
+    ? EVENT_PKG_QIDS.map((q) => text(answers, q)).filter(Boolean).join('\n')
+    : text(answers, M.project_info);
   return {
-    contract_number: text(answers, QID.contract_number),
-    project_name: text(answers, QID.project_name),
-    customer_name: text(answers, QID.customer_name),
-    customer_email: text(answers, QID.customer_email),
-    sales_name: text(answers, QID.sales_name),
-    sales_email: text(answers, QID.sales_email),
-    pm_name: text(answers, QID.pm_name),
-    pm_email: text(answers, QID.pm_email),
-    tech_lead_name: text(answers, QID.tech_lead_name),
-    tech_lead_email: text(answers, QID.tech_lead_email),
-    address: address(answers, QID.address),
-    project_info: text(answers, QID.project_info),
+    contract_number: text(answers, M.contract_number),
+    project_name: text(answers, M.project_name),
+    customer_name: text(answers, M.customer_name),
+    customer_email: text(answers, M.customer_email),
+    sales_name: text(answers, M.sales_name),
+    sales_email: text(answers, M.sales_email),
+    pm_name: text(answers, M.pm_name),
+    pm_email: text(answers, M.pm_email),
+    tech_lead_name: text(answers, M.tech_lead_name),
+    tech_lead_email: text(answers, M.tech_lead_email),
+    address: address(answers, M.address),
+    project_info: text(answers, M.project_info),
     site_survey_done: completed,
     predeploy_review_done: completed,
-    site_survey_url: fileUrl(answers, QID.site_survey_file),
-    deployment_url: fileUrl(answers, QID.deployment_file),
-    packing_list_url: fileUrl(answers, QID.packing_list_file),
+    site_survey_url: M.site_survey_file ? fileUrl(answers, M.site_survey_file) : '',
+    deployment_url: M.deployment_file ? fileUrl(answers, M.deployment_file) : '',
+    packing_list_url: M.packing_list_file ? fileUrl(answers, M.packing_list_file) : '',
+    pkg_text,
   };
 }
 
@@ -127,11 +170,14 @@ async function handle(request) {
   // Auto-capture: read the submission back and parse by qid. Best-effort — if the
   // API read fails (no key / transient), record a minimal row from any params and
   // DON'T clobber an existing good row.
+  // ?form=installation|event on the URL wins; else detect by form id.
+  let kind = formKindOf(pick('form', 'type'), formId);
   const fetched = await getJotformSubmission(submissionId);
   let p;
   if (fetched.ok) {
-    p = parseProposal(fetched.answers);
     if (!formId) formId = fetched.form_id;
+    kind = formKindOf(pick('form', 'type'), formId);   // re-resolve now that we know the form id
+    p = parseProposal(fetched.answers, kind);
   } else {
     p = {
       contract_number: pick('contract_number') || '', project_name: pick('project_name') || '',
@@ -183,11 +229,11 @@ async function handle(request) {
   // Slow part (download Packing List PDF + AI read/translate) runs AFTER the
   // response is flushed, then back-fills package_list. Keeps the webhook ~1s so
   // JotForm's approval workflow doesn't hang on the webhook step.
-  if (fetched.ok && (p.packing_list_url || p.project_info)) {
+  if (fetched.ok && (p.packing_list_url || p.pkg_text)) {
     after(async () => {
       try {
-        let pkgs = await extractPackageListFromFile(p.packing_list_url);
-        if (!pkgs || !pkgs.length) pkgs = await extractPackageList(p.project_info);
+        let pkgs = p.packing_list_url ? await extractPackageListFromFile(p.packing_list_url) : null;
+        if (!pkgs || !pkgs.length) pkgs = await extractPackageList(p.pkg_text);
         if (pkgs && pkgs.length) {
           await query('update ops.project_proposal set package_list = $2 where submission_id = $1',
             [submissionId, JSON.stringify(pkgs)]);
@@ -197,7 +243,7 @@ async function handle(request) {
   }
 
   return NextResponse.json({
-    ok: true, recorded: true, submission_id: submissionId,
+    ok: true, recorded: true, submission_id: submissionId, form: kind,
     customer: p.customer_name || null, packages: 'extracting', captured: fetched.ok,
   });
 }
