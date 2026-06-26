@@ -113,6 +113,9 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
   // OR a JotForm workflow approval — a jotform_stage_event(stage='approved') whose
   // submission_id matches the one we pushed to JotForm when the form was finalized.
   const jfSubId = jf?.submission_id || jf?.submissionID || null;
+  // Viewable submission link. NOT jf.url — that's the api.jotform.com resource URL,
+  // which 401s in a browser. www.jotform.com/submission/<id> opens for logged-in users.
+  const jfUrl = jfSubId ? `https://www.jotform.com/submission/${jfSubId}` : (jf?.url || null);
   const jotformApproved = !!(jfSubId && approvedSubmissionIds.has(String(jfSubId)));
   const managerApproved = submission?.status === 'approved' || jotformApproved;
   // Latest manager decision was a denial (and not since re-approved). Redoing the
@@ -160,7 +163,7 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
       case 'request':
         return [
           task('Request form drafted', !!submission, submission ? `by ${submission.submitted_by || ''}` : null),
-          task('Submitted to JotForm', submission?.status === 'finalized' || submission?.status === 'approved', so ? `SO ${so}` : null, jf?.url || null),
+          task('Submitted to JotForm', submission?.status === 'finalized' || submission?.status === 'approved', so ? `SO ${so}` : null, jfUrl),
         ];
       case 'review':
         return [
@@ -226,7 +229,7 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     agreement_type: a.agreement_type, robot_types: a.robot_types, robot_count: a.robot_count,
     salesman_name: a.salesman_name, salesman_email: a.salesman_email, so_number: so,
     created_at: a.created_at, stage: stageIdx, stage_key: stageKey,
-    jotform_url: jf?.url || null, calendar_link: cal?.html_link || null,
+    jotform_url: jfUrl, calendar_link: cal?.html_link || null,
     prep_all_done: prepAllDone, confirmation_done: !!conf,
     nodes,
   };
