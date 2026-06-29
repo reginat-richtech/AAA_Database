@@ -82,6 +82,10 @@ export default function ProjectTracker() {
           .rail-legend i.done { background:var(--primary); border-color:var(--primary); }
           .rail-legend i.next { border-color:#10b981; box-shadow:0 0 0 3px rgba(16,185,129,.25); }
           .rail-legend i.ref { border-style:dashed; }
+          .ship-chip { font-size:11px; font-weight:700; padding:1px 8px; border-radius:999px; border:1px solid; white-space:nowrap; }
+          .ship-pending { background:var(--chip); color:var(--muted); border-color:var(--line); }
+          .ship-shipped { background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; }
+          .ship-delivered { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
         `}</style>
       </section>
 
@@ -96,6 +100,11 @@ export default function ProjectTracker() {
         const curColor = STAGE_RAMP[p.stage];
         const cur = p.nodes[p.stage];
         const isOpen = open === p.id;
+        const sh = p.shipment;
+        const shLabel = sh && (sh.shipping_needed === false ? 'On-site / pickup'
+          : sh.est_delivery_date ? `ETA ${new Date(sh.est_delivery_date).toLocaleDateString()}`
+          : sh.est_ship_date ? `Ships ${new Date(sh.est_ship_date).toLocaleDateString()}`
+          : sh.status);
         return (
           <div className="pcard" key={p.id} onClick={() => setOpen(isOpen ? null : p.id)}>
             <div className="pc-head">
@@ -113,6 +122,7 @@ export default function ProjectTracker() {
               {p.contract_number && <span>Contract {p.contract_number}</span>}
               {p.so_number && <span>SO {p.so_number}</span>}
               {p.created_at && <span><span className="mi">📅</span> {new Date(p.created_at).toLocaleDateString()}</span>}
+              {sh && <span className={`ship-chip ship-${sh.status}`} title={[sh.est_ship_date && `Ship ${sh.est_ship_date}`, sh.est_delivery_date && `Arrive ${sh.est_delivery_date}`, sh.carrier, sh.tracking_number && `#${sh.tracking_number}`].filter(Boolean).join(' · ') || undefined}>🚚 {shLabel}{sh.shipping_needed !== false && sh.status !== 'pending' ? ` · ${sh.status}` : ''}</span>}
               <span className="pc-link" onClick={(e) => e.stopPropagation()}>
                 {p.is_proposal_only
                   ? <Link href={`/data-upload?sales_name=${encodeURIComponent(p.salesman_name || '')}&sales_email=${encodeURIComponent(p.salesman_email || '')}&contract=${encodeURIComponent(p.contract_number || '')}`} className="btnlink">+ Upload agreement ↗</Link>

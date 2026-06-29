@@ -68,6 +68,17 @@ export async function GET() {
     for (const e of installEv) { const k = normSo(e.payload?.so_number); if (k && !(k in installBySo)) installBySo[k] = e.payload; }
   } catch { /* ignore */ }
 
+  // Shipment per project (ops.shipment, one row per agreement id) — surfaces the
+  // shipping estimate on each card. Degrades to none if ops.shipment isn't migrated.
+  const shipByProject = {};
+  try {
+    const shipRows = (await query(
+      `select project_id, est_ship_date, est_delivery_date, status, carrier, tracking_number, shipping_needed
+         from ops.shipment`
+    )).rows;
+    for (const s of shipRows) shipByProject[String(s.project_id)] = s;
+  } catch { /* ops.shipment not migrated yet */ }
+
   // Final Proposal Form submissions — the project's entry point (they precede
   // the agreement). Latest per normalized customer name wins for best-effort
   // matching to an agreement; unmatched ones become standalone stage-0 projects.
@@ -134,7 +145,8 @@ export async function GET() {
       || propByCustomer[normName(a.counterparty)] || null;
     if (proposal) matchedProposalIds.add(proposal.id);
     const install = so ? installBySo[normSo(so)] || null : null;
-    return buildProject(a, sub, conf, approvedSubIds, proposal, deniedSubIds, prepFor(a.id), install);
+    const shipment = shipByProject[String(a.id)] || null;
+    return buildProject(a, sub, conf, approvedSubIds, proposal, deniedSubIds, prepFor(a.id), install, shipment);
   });
 
   // Unmatched proposals stand on their own as stage-0 entry points (owner = the

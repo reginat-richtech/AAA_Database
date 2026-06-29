@@ -9,6 +9,7 @@ const WORKFLOW = [
   { href: '/travel-requests', label: 'Travel Requests', icon: 'plane' },
   { href: '/tasks', label: 'Task Tracking', icon: 'check' },
   { href: '/inventory', label: 'Inventory', icon: 'box' },
+  { href: '/invoices', label: 'Invoices', icon: 'receipt' },
   { href: '/social', label: 'Social Media', icon: 'share' },
   // Data Upload and Tech Request are intentionally hidden from the nav — their
   // pages still work: /data-upload directly, and /tech-request is opened per
@@ -40,6 +41,8 @@ function Icon({ name }) {
     case 'share': return (<svg {...p}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>);
     case 'check': return (<svg {...p}><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>);
     case 'box': return (<svg {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>);
+    case 'truck': return (<svg {...p}><rect x="1" y="3" width="15" height="13" /><polygon points="16 8 20 8 23 11 23 16 16 16 16 8" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></svg>);
+    case 'receipt': return (<svg {...p}><path d="M4 2v20l3-2 3 2 2-2 2 2 3-2 3 2V2l-3 2-3-2-2 2-2-2-3 2-3-2z" /><line x1="8" y1="8" x2="16" y2="8" /><line x1="8" y1="12" x2="16" y2="12" /></svg>);
     default: return null;
   }
 }

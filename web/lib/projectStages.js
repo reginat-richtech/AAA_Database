@@ -101,7 +101,7 @@ function proposalTasks(proposal) {
   ];
 }
 
-export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null, deniedSubmissionIds = new Set(), prep = null, install = null) {
+export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null, deniedSubmissionIds = new Set(), prep = null, install = null, shipment = null) {
   const ann = (submission && submission.answers) || {};
   const appr = ann._approval || null;
   const cal = ann._calendar || null;
@@ -261,6 +261,13 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     created_at: a.created_at, stage: stageIdx, stage_key: stageKey,
     jotform_url: jfUrl, calendar_link: cal?.html_link || null,
     prep_all_done: prepAllDone, confirmation_done: !!conf,
+    shipment: shipment ? {
+      status: shipment.status || 'pending',
+      shipping_needed: shipment.shipping_needed !== false,
+      est_ship_date: shipment.est_ship_date ? String(shipment.est_ship_date).slice(0, 10) : null,
+      est_delivery_date: shipment.est_delivery_date ? String(shipment.est_delivery_date).slice(0, 10) : null,
+      carrier: shipment.carrier || null, tracking_number: shipment.tracking_number || null,
+    } : null,
     nodes,
   };
 }

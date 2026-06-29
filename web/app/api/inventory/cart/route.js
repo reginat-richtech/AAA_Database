@@ -121,6 +121,19 @@ export async function DELETE(req) {
   }
   const id = new URL(req.url).searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+  // Block removal once the project's inventory is ended (locked) — its 'shipping'
+  // prep task is done. Reopen (un-confirm) to edit again.
+  const alloc = (await query('select project_id from inventory.project_allocation where id = $1::bigint', [id])).rows[0];
+  if (alloc) {
+    let ended = false;
+    try {
+      ended = (await query(
+        `select 1 from ext.task where project_id = $1 and auto_key = 'shipping' and status = 'done' limit 1`,
+        [alloc.project_id],
+      )).rows.length > 0;
+    } catch { /* ext.task not present */ }
+    if (ended) return NextResponse.json({ error: 'Inventory for this project is ended (locked). Reopen it to make changes.' }, { status: 409 });
+  }
   await mutateAs(user.email, (q) => q('delete from inventory.project_allocation where id = $1::bigint', [id]));
   return NextResponse.json({ ok: true });
 }

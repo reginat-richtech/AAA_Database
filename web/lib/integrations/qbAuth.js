@@ -76,3 +76,46 @@ export async function qbStatus() {
   const cred = await getQbCredential();
   return { configured: qbConfigured(), connected: !!cred, realm: cred?.realm_id || null, company: cred?.company_name || null };
 }
+
+// Make an authenticated QuickBooks API call. Refreshes the access token (and
+// persists Intuit's rotated refresh token), then calls /v3/company/<realm><path>.
+// Returns { data } on success or { error } — never throws.
+export async function qbApiRequest(path, { method = 'GET', body } = {}) {
+  const cred = await getQbCredential();
+  if (!cred) return { error: 'QuickBooks is not connected — an admin must Connect QuickBooks first.' };
+  let tok;
+  try { tok = await refreshAccessToken(cred.refresh_token); }
+  catch (e) { return { error: `QuickBooks auth failed: ${String(e?.message || e)}` }; }
+  // QB rotates the refresh token on each refresh — persist it so the next call works.
+  if (tok.refresh_token && tok.refresh_token !== cred.refresh_token) {
+    try { await saveQbCredential({ ...cred, refresh_token: tok.refresh_token }); } catch { /* best effort */ }
+  }
+  const sep = path.includes('?') ? '&' : '?';
+  const url = `${qbApiBase(cred.environment)}/v3/company/${cred.realm_id}${path}${sep}minorversion=70`;
+  let res, json;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${tok.access_token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    json = await res.json().catch(() => ({}));
+  } catch (e) { return { error: `QuickBooks request failed: ${String(e?.message || e)}` }; }
+  if (!res.ok) {
+    const f = json?.Fault?.Error?.[0];
+    return { error: f?.Message || f?.Detail || `QuickBooks API ${res.status}`, status: res.status };
+  }
+  return { data: json };
+}
+
+// The QuickBooks item/price list: { items: [{id, name, sku, unit_price, type}] }.
+// Used to price invoice lines and to reference the real QB item on push.
+export async function qbFetchItems() {
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select Id, Name, Sku, UnitPrice, Type from Item where Active = true maxresults 1000')}`);
+  if (r.error) return { error: r.error, items: [] };
+  const items = (r.data?.QueryResponse?.Item || []).map((it) => ({
+    id: String(it.Id), name: it.Name, sku: it.Sku || null,
+    unit_price: it.UnitPrice != null ? Number(it.UnitPrice) : null, type: it.Type || null,
+  }));
+  return { items };
+}
