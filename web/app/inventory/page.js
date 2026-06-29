@@ -78,6 +78,19 @@ export default function Inventory() {
     else { const j = await res.json().catch(() => ({})); setMsg(j.error || 'Add failed'); }
   }
 
+  // Inventory sign-off — marks the project's "Shipping preparation" prep step done
+  // (inventory manager / admin only); shared with the Project Tracker.
+  async function confirmInventory(p, done) {
+    setBusy(true); setMsg('');
+    const res = await fetch('/api/project-tracker/prep', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: p.id, prep_key: 'shipping', done }),
+    });
+    setBusy(false);
+    if (res.ok) { setMsg(done ? '✓ Inventory confirmed' : 'Confirmation undone'); load(); }
+    else { const j = await res.json().catch(() => ({})); setMsg(j.error || 'Confirm failed'); }
+  }
+
   const modalCart = addModal ? (cartByProject[addModal.project_id] || []) : [];
 
   return (
@@ -87,6 +100,7 @@ export default function Inventory() {
       <div className="toolbar">
         <Link href="/inventory/detail" className="invbtn">📦 Full inventory detail (stock list) →</Link>
         {!canEdit && <span className="note">View only — admins / inventory team can add.</span>}
+        {msg && !addModal && <span className="note" style={{ color: msg.startsWith('✓') ? '#16a34a' : 'inherit' }}>{msg}</span>}
         <span className="note" style={{ marginLeft: 'auto' }}>{projects.length} project(s)</span>
       </div>
 
@@ -101,6 +115,9 @@ export default function Inventory() {
               <span className="inv-ptitle">{p.title || p.counterparty || 'Project'}</span>
               {p.is_proposal && <span className="inv-proposal" title="Proposal stage — no agreement yet">Proposal</span>}
               {p.robot_types && <span className="note">🤖 {p.robot_types}{p.robot_count != null ? ` · ${p.robot_count}` : ''}</span>}
+              {p.inventory_confirmed && (
+                <span className="inv-confirmed" title={`Confirmed${p.confirmed_by_name ? ` by ${p.confirmed_by_name}` : ''}${p.confirmed_at ? ` · ${new Date(p.confirmed_at).toLocaleDateString()}` : ''}`}>✓ Inventory ready</span>
+              )}
               <span className="note" style={{ marginLeft: 'auto' }}>🛒 {cart.length} item(s)</span>
             </div>
             {open && (
@@ -135,6 +152,19 @@ export default function Inventory() {
                   </ul>
                 ) : <p className="note" style={{ margin: '4px 0' }}>No items in this project’s cart yet.</p>}
                 {canEdit && <button className="secondary" onClick={() => { setAddModal({ project_id: p.id, label: p.project_number }); setInvSearch(''); setMsg(''); }}>+ Add inventory</button>}
+
+                {/* Inventory sign-off (manager/admin) — shared with the tracker's Shipping prep step */}
+                <div className="inv-confirm-row">
+                  {p.inventory_confirmed ? (
+                    <span className="inv-confirm-note">✓ Inventory confirmed{p.confirmed_by_name ? ` by ${p.confirmed_by_name}` : ''}{p.confirmed_at ? ` · ${new Date(p.confirmed_at).toLocaleDateString()}` : ''}
+                      {p.can_confirm && <button className="inv-undo" onClick={() => confirmInventory(p, false)} disabled={busy}>Undo</button>}
+                    </span>
+                  ) : p.can_confirm ? (
+                    <button className="inv-confirm-btn" onClick={() => confirmInventory(p, true)} disabled={busy}>✓ Confirm inventory ready</button>
+                  ) : !p.is_proposal ? (
+                    <span className="note">Inventory not yet confirmed.</span>
+                  ) : null}
+                </div>
               </div>
             )}
           </div>
@@ -199,6 +229,13 @@ export default function Inventory() {
         .inv-rname { flex:1 1 auto; font-size:13px; font-weight:500; min-width:0; }
         .inv-rmeta { font-size:11px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; font-weight:400; } .inv-rmeta code { font-size:11px; }
         .inv-rqty { width:54px; flex:0 0 auto; }
+        .inv-confirmed { font-size:11px; font-weight:700; color:#15803d; background:rgba(22,163,74,.12); border:1px solid rgba(22,163,74,.4); padding:1px 8px; border-radius:999px; }
+        .inv-confirm-row { margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); }
+        .inv-confirm-btn { background:#16a34a; }
+        .inv-confirm-btn:hover { background:#15803d; }
+        .inv-confirm-note { font-size:13px; color:#15803d; font-weight:600; display:inline-flex; align-items:center; gap:10px; }
+        .inv-undo { font-size:11px; padding:2px 10px; background:var(--chip); color:var(--ink); border:1px solid var(--line); }
+        .inv-undo:hover { background:#e2ecf9; }
       `}</style>
     </>
   );
