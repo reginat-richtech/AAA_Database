@@ -15,7 +15,7 @@ export const PROJECT_STAGES = [
   { key: 'review', label: 'Tech Department Review & Approve', color: '#22c55e', tracked: true },
   { key: 'prep', label: 'Team Preparation', color: '#14b8a6', tracked: true },
   { key: 'confirmation', label: 'Technician Confirmation', color: '#0ea5e9', tracked: true },
-  { key: 'closure', label: 'Installation & Closure', color: '#8b5cf6', tracked: false },
+  { key: 'closure', label: 'Installation & Closure', color: '#8b5cf6', tracked: true },
   { key: 'finance', label: 'Finance Review & Reconciliation', color: '#ec4899', tracked: false },
 ];
 
@@ -116,6 +116,12 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
   const confApproved = !!conf && !confDenied;
   const so = ann.so_number || '';
 
+  // Onsite installation report (Stage 8), parsed from the On-site Customer
+  // Checklist/Confirmation form (matched by SO). Closure is "done" once the report
+  // says the install passed/completed (a Fail/Incomplete report leaves it pending).
+  const inst = install || null;
+  const installComplete = !!inst && /complete|pass|success|finish|done/i.test(inst.status || '');
+
   // Manager approval is satisfied by the in-app "Approve & schedule" (status=approved)
   // OR a JotForm workflow approval — a jotform_stage_event(stage='approved') whose
   // submission_id matches the one we pushed to JotForm when the form was finalized.
@@ -143,6 +149,7 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     review: managerApproved,
     prep: confApproved || (managerApproved && prepAllDone),
     confirmation: confApproved,
+    closure: installComplete,
   };
 
   // current stage = furthest tracked node that is done
@@ -215,21 +222,19 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
             jotformUrl(conf?.submission_id)),
           task('Technicians arrival date set', confApproved && !!confPayload.fly_out, confPayload.fly_out ? `out ${confPayload.fly_out} → back ${confPayload.fly_back || '?'}` : null),
         ];
-      case 'closure': {
-        // Driven by the On-site Customer Checklist/Confirmation form (captured via
-        // the jotform-stage webhook, matched by SO). Until a report lands, the
-        // checklist/sign-off/complete leaves stay "manual"; "Onsite installation"
-        // is a real pending→done item.
-        const inst = install || null;
-        const complete = /complete|pass|success|finish|done/i.test(inst?.status || '');
+      case 'closure':
+        // Driven by the On-site Customer Checklist/Confirmation form (matched by SO).
+        // The stage bubble completes when the report's Status is Pass/Complete.
         return [
           task('Onsite installation', !!inst,
             inst ? [inst.technician, inst.date].filter(Boolean).join(' · ') || 'reported' : null),
-          task('Install checklist', inst ? !!inst.checklist_done : null, inst?.status || null),
+          // Techs often set Status=Pass without ticking every per-robot checklist box,
+          // so a passed install counts the checklist as done too (not stuck pending).
+          task('Install checklist', inst ? (!!inst.checklist_done || installComplete) : null,
+            inst ? (inst.checklist_done ? 'checklist items checked' : (installComplete ? `via status: ${inst.status}` : null)) : null),
           task('Customer sign-off', inst ? !!inst.customer_signed : null, inst?.customer_signed ? 'signed' : null),
-          task('Project complete', inst ? complete : null, inst ? (inst.status || null) : null),
+          task('Project complete', inst ? installComplete : null, inst ? (inst.status || null) : null),
         ];
-      }
       case 'finance':
         return [
           task('Final invoice issued & sent', null),
