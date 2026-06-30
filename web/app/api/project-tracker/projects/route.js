@@ -79,6 +79,17 @@ export async function GET() {
     for (const s of shipRows) shipByProject[String(s.project_id)] = s;
   } catch { /* ops.shipment not migrated yet */ }
 
+  // Invoices connected to each project (ops.invoice.project_id = agreement/proposal id).
+  // Surfaced on the QuickBooks Invoice stage; people connect an existing invoice here.
+  const invByProject = {};
+  try {
+    const invRows = (await query(
+      `select id::text as id, project_id, invoice_number, qb_doc_number, customer_name, status, lines, created_at
+         from ops.invoice where project_id is not null order by created_at`
+    )).rows;
+    for (const r of invRows) { (invByProject[String(r.project_id)] ||= []).push(r); }
+  } catch { /* ops.invoice not migrated yet */ }
+
   // Final Proposal Form submissions — the project's entry point (they precede
   // the agreement). Latest per normalized customer name wins for best-effort
   // matching to an agreement; unmatched ones become standalone stage-0 projects.
@@ -89,7 +100,8 @@ export async function GET() {
     proposals = (await query(
       `select id, submission_id, project_number, contract_number, project_name, customer_name, customer_email,
               sales_name, sales_email, deployment_url, site_survey_url, packing_list_url,
-              site_survey_done, predeploy_review_done, project_info, package_list, created_at
+              site_survey_done, predeploy_review_done, project_info, package_list, created_at,
+              deal_id, deal_name, deal_amount, deal_customer
        from ops.project_proposal order by created_at desc`
     )).rows;
   } catch (e) {
@@ -146,7 +158,7 @@ export async function GET() {
     if (proposal) matchedProposalIds.add(proposal.id);
     const install = so ? installBySo[normSo(so)] || null : null;
     const shipment = shipByProject[String(a.id)] || null;
-    return buildProject(a, sub, conf, approvedSubIds, proposal, deniedSubIds, prepFor(a.id), install, shipment);
+    return buildProject(a, sub, conf, approvedSubIds, proposal, deniedSubIds, prepFor(a.id), install, shipment, invByProject[String(a.id)] || []);
   });
 
   // Unmatched proposals stand on their own as stage-0 entry points (owner = the
@@ -154,7 +166,7 @@ export async function GET() {
   const proposalOnly = proposals
     .filter((p) => !matchedProposalIds.has(p.id))
     .filter((p) => user.isAdmin || (p.sales_email && p.sales_email.toLowerCase() === user.email))
-    .map(buildProposalProject);
+    .map((p) => buildProposalProject(p, invByProject[String(p.id)] || []));
   const allProjects = [...proposalOnly, ...projects];
 
   const counts = {};

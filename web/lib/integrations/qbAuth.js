@@ -108,6 +108,91 @@ export async function qbApiRequest(path, { method = 'GET', body } = {}) {
   return { data: json };
 }
 
+// Enabled legacy sales-form custom fields (settable on a txn via the CustomField
+// array). Returns [{id:'1'|'2'|'3', name}]. Lets us push app fields (PO #, Project
+// Manager) into whatever custom fields the company actually has, matched by name.
+export async function qbFetchSalesCustomFields() {
+  const r = await qbApiRequest('/preferences');
+  if (r.error) return { error: r.error, fields: [] };
+  const groups = r.data?.Preferences?.SalesFormsPrefs?.CustomField || [];
+  const flat = {};
+  for (const g of groups) for (const f of (g.CustomField || [])) flat[f.Name] = f;
+  const fields = [];
+  for (const n of [1, 2, 3]) {
+    const enabled = flat[`SalesFormsPrefs.UseSalesCustom${n}`]?.BooleanValue === true;
+    const name = flat[`SalesFormsPrefs.SalesCustomName${n}`]?.StringValue || '';
+    if (enabled && name) fields.push({ id: String(n), name });
+  }
+  return { fields };
+}
+
+// The QuickBooks Class list: { classes: [{id, name}] } (FullyQualifiedName preserves
+// the "Parent:Child" hierarchy). (Note: QB "Tags" have NO Accounting-API entity.)
+export async function qbFetchClasses() {
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select Id, Name, FullyQualifiedName, Active from Class where Active = true maxresults 500')}`);
+  if (r.error) return { error: r.error, classes: [] };
+  const classes = (r.data?.QueryResponse?.Class || [])
+    .map((c) => ({ id: String(c.Id), name: c.FullyQualifiedName || c.Name }))
+    .filter((c) => c.name);
+  return { classes };
+}
+
+// The QuickBooks employee list: { employees: [{id, name}] }.
+export async function qbFetchEmployees() {
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select Id, DisplayName, GivenName, FamilyName from Employee where Active = true maxresults 1000')}`);
+  if (r.error) return { error: r.error, employees: [] };
+  const employees = (r.data?.QueryResponse?.Employee || [])
+    .map((e) => ({ id: String(e.Id), name: e.DisplayName || [e.GivenName, e.FamilyName].filter(Boolean).join(' ') }))
+    .filter((e) => e.name);
+  return { employees };
+}
+
+// The Project-Manager list from a QuickBooks dropdown custom field.
+// QB's custom-field API is newer/limited, so this reads CustomFieldDefinition and
+// extracts the option values across a few possible shapes — best-effort.
+// Returns { managers: [names], field_id, field_name }.
+export async function qbFetchProjectManagers() {
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select * from CustomFieldDefinition')}`);
+  if (r.error) return { error: r.error, managers: [], field_id: null, field_name: null };
+  const defs = r.data?.QueryResponse?.CustomFieldDefinition || r.data?.QueryResponse?.CustomFieldDefinitions || [];
+  const label = (d) => String(d.Label || d.Name || d.StringValue || '');
+  const def = defs.find((d) => /manager|^pm$|project\s*mgr/i.test(label(d))) || null;
+  if (!def) return { managers: [], field_id: null, field_name: defs.length ? null : null };
+  // Options can live under various keys depending on QB's payload.
+  const raw = def.AllowedValues?.Value ?? def.AllowedValues ?? def.DropDownOptions ?? def.Options ?? def.PickListItems ?? [];
+  const managers = (Array.isArray(raw) ? raw : [])
+    .map((o) => (typeof o === 'string' ? o : (o.Value || o.value || o.Name || o.Label || o.StringValue || '')))
+    .filter(Boolean);
+  return { managers, field_id: def.Id || null, field_name: label(def) || null };
+}
+
+// The QuickBooks customer list: { customers: [{id, name, email, phone, address}] }.
+const qbAddr = (a) => (a ? [a.Line1, a.Line2, [a.City, a.CountrySubDivisionCode, a.PostalCode].filter(Boolean).join(' '), a.Country].filter(Boolean).join('\n') : '');
+export async function qbFetchCustomers() {
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select Id, DisplayName, PrimaryEmailAddr, PrimaryPhone, BillAddr from Customer where Active = true maxresults 1000')}`);
+  if (r.error) return { error: r.error, customers: [] };
+  const customers = (r.data?.QueryResponse?.Customer || []).map((c) => ({
+    id: String(c.Id), name: c.DisplayName,
+    email: c.PrimaryEmailAddr?.Address || '', phone: c.PrimaryPhone?.FreeFormNumber || '',
+    address: qbAddr(c.BillAddr),
+  }));
+  return { customers };
+}
+
+// Server-side customer search (for large customer lists — 2000+). Matches
+// DisplayName by substring; returns up to 30. { customers: [{id,name,email,phone,address}] }.
+export async function qbSearchCustomers(qstr) {
+  const safe = String(qstr || '').replace(/['\\%_]/g, ' ').trim();
+  if (!safe) return { customers: [] };
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent(`select Id, DisplayName, PrimaryEmailAddr, PrimaryPhone, BillAddr from Customer where DisplayName like '%${safe}%' maxresults 30`)}`);
+  if (r.error) return { error: r.error, customers: [] };
+  const customers = (r.data?.QueryResponse?.Customer || []).map((c) => ({
+    id: String(c.Id), name: c.DisplayName,
+    email: c.PrimaryEmailAddr?.Address || '', phone: c.PrimaryPhone?.FreeFormNumber || '', address: qbAddr(c.BillAddr),
+  }));
+  return { customers };
+}
+
 // The QuickBooks item/price list: { items: [{id, name, sku, unit_price, type}] }.
 // Used to price invoice lines and to reference the real QB item on push.
 export async function qbFetchItems() {

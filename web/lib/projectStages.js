@@ -72,6 +72,25 @@ const docFor = (proposalId, key, url) => (proposalId && url ? {
 // resource URL, which 401s in a browser). Used to link JotForm-sourced steps.
 export const jotformUrl = (subId) => (subId ? `https://www.jotform.com/submission/${subId}` : null);
 
+// The HubSpot deal linked to a proposal (Step 1), with the pulled customer.
+const dealOf = (p) => (p && p.deal_id ? {
+  id: p.deal_id, name: p.deal_name || null,
+  amount: p.deal_amount != null ? Number(p.deal_amount) : null,
+  customer: p.deal_customer || null,
+} : null);
+
+// Invoices connected to this project (ops.invoice rows whose project_id = the
+// project id). Each is reduced to a compact card for the tracker's invoice stage.
+const invLineAmt = (l) => (l && l.amount != null && l.amount !== '' ? Number(l.amount) : (Number(l?.quantity) || 0) * (Number(l?.unit_price) || 0));
+const invoicesOf = (rows) => (Array.isArray(rows) ? rows : []).map((iv) => ({
+  id: typeof iv.id === 'string' ? iv.id : String(iv.id),
+  number: iv.invoice_number || iv.qb_doc_number || null,
+  status: iv.status || 'draft',
+  customer_name: iv.customer_name || null,
+  total: (Array.isArray(iv.lines) ? iv.lines : []).reduce((s, l) => s + invLineAmt(l), 0),
+  pushed: !!iv.qb_doc_number,
+}));
+
 // Final Proposal Form checklist, computed from a captured ops.project_proposal
 // row (or null when no proposal is linked to this project yet → all pending).
 function proposalTasks(proposal) {
@@ -101,7 +120,8 @@ function proposalTasks(proposal) {
   ];
 }
 
-export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null, deniedSubmissionIds = new Set(), prep = null, install = null, shipment = null) {
+export function buildProject(a, submission, confirmation, approvedSubmissionIds = new Set(), proposal = null, deniedSubmissionIds = new Set(), prep = null, install = null, shipment = null, invoices = []) {
+  const projInvoices = invoicesOf(invoices);
   const ann = (submission && submission.answers) || {};
   const appr = ann._approval || null;
   const cal = ann._calendar || null;
@@ -177,7 +197,11 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
           task('Salesman assigned', !!(a.salesman_name || a.salesman_email), a.salesman_name || a.salesman_email),
         ];
       case 'invoice':
-        return [task('QuickBooks invoice issued', null)];
+        if (!projInvoices.length) return [task('QuickBooks invoice issued', null)];
+        return projInvoices.map((iv) => task(
+          `Invoice ${iv.number || '(draft)'}`,
+          iv.pushed ? true : null,
+          [iv.customer_name, iv.total ? `$${iv.total.toLocaleString()}` : null, iv.status].filter(Boolean).join(' · ') || null));
       case 'request':
         return [
           task('Request form drafted', !!submission, submission ? `by ${submission.submitted_by || ''}` : null),
@@ -261,6 +285,8 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     created_at: a.created_at, stage: stageIdx, stage_key: stageKey,
     jotform_url: jfUrl, calendar_link: cal?.html_link || null,
     prep_all_done: prepAllDone, confirmation_done: !!conf,
+    proposal_id: proposal?.id || null, deal: dealOf(proposal),
+    invoices: projInvoices,
     shipment: shipment ? {
       status: shipment.status || 'pending',
       shipping_needed: shipment.shipping_needed !== false,
@@ -275,15 +301,19 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
 // A standalone Project Tracker row for a proposal that has no agreement yet.
 // The proposal is the project's first step, so it sits at stage 0 ("Final
 // Proposal Form") with every downstream stage still pending/manual.
-export function buildProposalProject(proposal) {
+export function buildProposalProject(proposal, invoices = []) {
   const p = proposal;
+  const projInvoices = invoicesOf(invoices);
+  const invTasks = projInvoices.map((iv) => task(
+    `Invoice ${iv.number || '(draft)'}`, iv.pushed ? true : null,
+    [iv.customer_name, iv.total ? `$${iv.total.toLocaleString()}` : null, iv.status].filter(Boolean).join(' · ') || null));
   const done = { proposal: true };
   let stageIdx = 0;
   PROJECT_STAGES.forEach((s, i) => { if (s.tracked && done[s.key]) stageIdx = i; });
   const nodes = PROJECT_STAGES.map((s, i) => ({
     ...s,
     status: !s.tracked ? 'manual' : done[s.key] ? 'done' : i === stageIdx ? 'current' : 'pending',
-    tasks: s.key === 'proposal' ? proposalTasks(p) : [],
+    tasks: s.key === 'proposal' ? proposalTasks(p) : (s.key === 'invoice' ? invTasks : []),
   }));
   return {
     id: p.id, project_number: p.project_number || p.contract_number || 'PROPOSAL',
@@ -295,6 +325,8 @@ export function buildProposalProject(proposal) {
     so_number: '', created_at: p.created_at,
     stage: stageIdx, stage_key: 'proposal',
     jotform_url: jotformUrl(p.submission_id), calendar_link: null, is_proposal_only: true,
+    proposal_id: p.id, deal: dealOf(p),
+    invoices: projInvoices,
     nodes,
   };
 }

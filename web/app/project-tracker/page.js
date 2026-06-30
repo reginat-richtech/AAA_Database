@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { PageHeader, StageRail, ProjectRail, STAGES, STAGE_RAMP } from '../_components/blueprint';
 
@@ -21,9 +21,28 @@ export default function ProjectTracker() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // { pid, text, err }
   const [confirmReq, setConfirmReq] = useState(null); // { p, t } — approval awaiting confirmation
+  const [dealPicker, setDealPicker] = useState(null); // proposal_id whose HubSpot deal-picker is open
+  const [dealQ, setDealQ] = useState('');
+  const [dealResults, setDealResults] = useState([]);
+  const [invPicker, setInvPicker] = useState(null); // project id whose invoice-picker is open
+  const [invQ, setInvQ] = useState('');
+  const [invResults, setInvResults] = useState([]);
 
   const refresh = () => fetch('/api/project-tracker/projects').then((r) => r.json()).then(setData).catch(() => {});
   useEffect(() => { refresh(); }, []);
+
+  // Deep link: /project-tracker?open=<projectId> (e.g. from an Invoice) auto-opens
+  // and scrolls to that project card once data has loaded.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || !data.projects.length) return;
+    const id = new URLSearchParams(window.location.search).get('open');
+    if (!id) { deepLinked.current = true; return; }
+    setOpen(id);
+    const el = document.getElementById(`proj-${id}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    deepLinked.current = true;
+  }, [data.projects.length]);
 
   // Mark / un-mark one Team-Preparation step (manager of that dept, or admin).
   async function markPrep(p, t) {
@@ -53,6 +72,53 @@ export default function ProjectTracker() {
       const note = n.sent ? `emailed to ${n.to}` : n.error ? `email error: ${n.error}`
         : n.skipped ? `email skipped (${n.skipped}) — use “open form”` : 'sent';
       setMsg({ pid: p.id, text: `Technician Confirmation form: ${note}.` });
+    } finally { setBusy(false); }
+  }
+
+  // HubSpot deal picker (Step 1): search synced deals; connect/unlink pulls the
+  // deal's customer from HubSpot server-side.
+  async function loadDeals(qstr) {
+    setDealQ(qstr);
+    const r = await fetch(`/api/hubspot/deals?q=${encodeURIComponent(qstr)}`);
+    const d = await r.json().catch(() => ({}));
+    setDealResults(d.deals || []);
+  }
+  function openDealPicker(proposalId) { setDealPicker(proposalId); setDealResults([]); loadDeals(''); }
+  async function connectDeal(p, dealId) {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/project-tracker/connect-deal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposal_id: p.proposal_id, deal_id: dealId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg({ pid: p.id, err: j.error || `Failed (HTTP ${r.status})` }); return; }
+      setDealPicker(null); await refresh();
+      const cust = j.deal?.customer?.company?.name;
+      setMsg({ pid: p.id, text: dealId ? `Linked deal "${j.deal?.name || dealId}"${cust ? ` · pulled customer ${cust}` : ''}.` : 'Deal unlinked.' });
+    } finally { setBusy(false); }
+  }
+
+  // Connect an EXISTING invoice to this project (QuickBooks Invoice stage): search
+  // ops.invoice and set its project_id. Unlink clears it. Admin/sales/finance only.
+  async function loadInvoices(qstr) {
+    setInvQ(qstr);
+    const r = await fetch(`/api/project-tracker/connect-invoice?q=${encodeURIComponent(qstr)}`);
+    const d = await r.json().catch(() => ({}));
+    setInvResults(d.invoices || []);
+  }
+  function openInvPicker(projectId) { setInvPicker(projectId); setInvResults([]); loadInvoices(''); }
+  async function connectInvoice(p, invoiceId, unlink = false) {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/project-tracker/connect-invoice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: unlink ? null : p.id, invoice_id: invoiceId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg({ pid: p.id, err: j.error || `Failed (HTTP ${r.status})` }); return; }
+      setInvPicker(null); await refresh();
+      setMsg({ pid: p.id, text: unlink ? 'Invoice unlinked.' : 'Invoice connected.' });
     } finally { setBusy(false); }
   }
 
@@ -86,6 +152,17 @@ export default function ProjectTracker() {
           .ship-pending { background:var(--chip); color:var(--muted); border-color:var(--line); }
           .ship-shipped { background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; }
           .ship-delivered { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
+          .deal-box { margin:8px 0 4px 22px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(255,122,0,.05); font-size:12.5px; }
+          .deal-head { font-size:13px; }
+          .deal-cust { margin:5px 0; display:flex; flex-direction:column; gap:2px; }
+          .deal-picker { margin-top:8px; }
+          .deal-picker > input { width:100%; }
+          .deal-results { max-height:200px; overflow:auto; border:1px solid var(--line); border-radius:6px; margin:6px 0; }
+          .deal-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; border-bottom:1px solid var(--line); }
+          .deal-row:last-child { border-bottom:0; }
+          .deal-row:nth-child(even) { background:rgba(29,78,216,.04); }
+          .inv-link-box { margin:8px 0 4px 22px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(234,179,8,.07); font-size:12.5px; }
+          .inv-link-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:3px 0; }
         `}</style>
       </section>
 
@@ -106,7 +183,7 @@ export default function ProjectTracker() {
           : sh.est_ship_date ? `Ships ${new Date(sh.est_ship_date).toLocaleDateString()}`
           : sh.status);
         return (
-          <div className="pcard" key={p.id} onClick={() => setOpen(isOpen ? null : p.id)}>
+          <div className="pcard" id={`proj-${p.id}`} key={p.id} onClick={() => setOpen(isOpen ? null : p.id)}>
             <div className="pc-head">
               <div className="pc-title">
                 <span className="pc-id">{p.project_number}</span>
@@ -154,6 +231,83 @@ export default function ProjectTracker() {
                           : t.status !== 'done' ? <span className="note" style={{ marginLeft: 8 }}>· {t.department} manager only</span> : null)}
                       </div>
                     ))}
+                    {n.key === 'proposal' && p.proposal_id && (
+                      <div className="deal-box">
+                        {p.deal ? (
+                          <>
+                            <div className="deal-head">🔗 HubSpot deal: <b>{p.deal.name || p.deal.id}</b>{p.deal.amount != null && <span className="note"> · ${Number(p.deal.amount).toLocaleString()}</span>}</div>
+                            {p.deal.customer && (
+                              <div className="deal-cust">
+                                {p.deal.customer.company && <div>🏢 <b>{p.deal.customer.company.name || '—'}</b>{p.deal.customer.company.domain ? <span className="note"> · {p.deal.customer.company.domain}</span> : null}{p.deal.customer.company.phone ? <span className="note"> · {p.deal.customer.company.phone}</span> : null}{p.deal.customer.company.address ? <span className="note"> · {p.deal.customer.company.address}</span> : null}</div>}
+                                {p.deal.customer.contact && <div>👤 {p.deal.customer.contact.name || '—'}{p.deal.customer.contact.email ? <span className="note"> · {p.deal.customer.contact.email}</span> : null}{p.deal.customer.contact.jobtitle ? <span className="note"> · {p.deal.customer.contact.jobtitle}</span> : null}</div>}
+                              </div>
+                            )}
+                            <div style={{ marginTop: 4 }}>
+                              <button className="btn-sm secondary" disabled={busy} onClick={(e) => { e.stopPropagation(); openDealPicker(p.proposal_id); }}>Change</button>
+                              <button className="btn-sm secondary" style={{ marginLeft: 6 }} disabled={busy} onClick={(e) => { e.stopPropagation(); connectDeal(p, null); }}>Unlink</button>
+                            </div>
+                          </>
+                        ) : (dealPicker !== p.proposal_id && (
+                          <button className="btn-sm" disabled={busy} onClick={(e) => { e.stopPropagation(); openDealPicker(p.proposal_id); }}>🔗 Connect HubSpot deal</button>
+                        ))}
+                        {dealPicker === p.proposal_id && (
+                          <div className="deal-picker" onClick={(e) => e.stopPropagation()}>
+                            <input autoFocus placeholder="Search HubSpot deals…" value={dealQ} onChange={(e) => loadDeals(e.target.value)} />
+                            <div className="deal-results">
+                              {dealResults.length ? dealResults.map((d) => (
+                                <div className="deal-row" key={d.id}>
+                                  <span>{d.name || d.id}{d.amount != null && <span className="note"> · ${Number(d.amount).toLocaleString()}</span>}</span>
+                                  <button className="btn-sm" disabled={busy} onClick={(e) => { e.stopPropagation(); connectDeal(p, d.id); }}>Use</button>
+                                </div>
+                              )) : <p className="note" style={{ margin: '4px 0' }}>No deals match.</p>}
+                            </div>
+                            <button className="btn-sm secondary" onClick={(e) => { e.stopPropagation(); setDealPicker(null); }}>Cancel</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {n.key === 'invoice' && (
+                      <div className="inv-link-box">
+                        {(p.invoices || []).length > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            {p.invoices.map((iv) => (
+                              <div className="inv-link-row" key={iv.id}>
+                                <span>🧾 <b>{iv.number || '(draft)'}</b>
+                                  {iv.customer_name ? <span className="note"> · {iv.customer_name}</span> : null}
+                                  {iv.total ? <span className="note"> · ${Number(iv.total).toLocaleString()}</span> : null}
+                                  <span className="note"> · {iv.status}</span></span>
+                                <button className="btn-sm secondary" disabled={busy} onClick={(e) => { e.stopPropagation(); connectInvoice(p, iv.id, true); }}>Unlink</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {invPicker !== p.id ? (
+                          <button className="btn-sm" disabled={busy} onClick={(e) => { e.stopPropagation(); openInvPicker(p.id); }}>🔗 Connect existing invoice</button>
+                        ) : (
+                          <div className="deal-picker" onClick={(e) => e.stopPropagation()}>
+                            <input autoFocus placeholder="Search invoices by #, customer…" value={invQ} onChange={(e) => loadInvoices(e.target.value)} />
+                            <div className="deal-results">
+                              {invResults.length ? invResults.map((iv) => {
+                                const here = iv.project_id === p.id;
+                                return (
+                                  <div className="deal-row" key={iv.id}>
+                                    <span>{iv.number || '(draft)'}
+                                      {iv.customer_name ? <span className="note"> · {iv.customer_name}</span> : null}
+                                      {iv.total ? <span className="note"> · ${Number(iv.total).toLocaleString()}</span> : null}
+                                      {iv.project_id && !here ? <span className="note"> · ⚠ linked to {iv.project_number || 'another project'}</span> : null}</span>
+                                    <button className="btn-sm" disabled={busy || here} onClick={(e) => { e.stopPropagation(); connectInvoice(p, iv.id); }}>{here ? 'Linked' : (iv.project_id ? 'Move here' : 'Use')}</button>
+                                  </div>
+                                );
+                              }) : <p className="note" style={{ margin: '4px 0' }}>No invoices match — create one in the Invoices page first.</p>}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <a href="/invoices" target="_blank" rel="noreferrer">Manage invoices ↗</a>
+                              <button className="btn-sm secondary" onClick={(e) => { e.stopPropagation(); setInvPicker(null); }}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {n.key === 'prep' && p.prep_all_done && !p.confirmation_done && (
                       <div className="tleaf" style={{ marginTop: 6 }}>
                         <button className="btn-sm" disabled={busy} onClick={(e) => { e.stopPropagation(); sendConfirmation(p); }}>Send form ↗</button>

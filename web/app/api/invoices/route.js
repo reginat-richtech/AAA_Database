@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/access';
 import { query, mutateAs } from '../../../lib/db';
-import { qbStatus, qbApiRequest, qbFetchItems } from '../../../lib/integrations/qbAuth';
+import { qbStatus, qbApiRequest, qbFetchItems, qbSearchCustomers, qbFetchProjectManagers, qbFetchEmployees, qbFetchClasses, qbFetchSalesCustomFields } from '../../../lib/integrations/qbAuth';
 import { normName, normSo } from '../../../lib/projectStages';
 
 export const runtime = 'nodejs';
@@ -32,7 +32,7 @@ function normLines(arr) {
 
 const INV_COLS = `id, project_id, status, currency, lines, notes, customer_name, customer_email,
   billing_address, shipping_address, invoice_number, invoice_date, due_date, terms, customer_message,
-  po_number, payment_instructions, tags, class_name, discount_type, discount_value, tax_rate, confirmed_by, confirmed_at,
+  po_number, payment_instructions, project_manager, tags, class_name, discount_type, discount_value, tax_rate, confirmed_by, confirmed_at,
   qb_invoice_id, qb_doc_number, pushed_at, push_error, created_by, created_at, updated_at`;
 
 const normTags = (arr) => [...new Set((Array.isArray(arr) ? arr : []).map((t) => String(t).trim()).filter(Boolean))].slice(0, 20);
@@ -42,8 +42,12 @@ export async function GET(req) {
   if (response) return response;
   if (!canInvoice(user)) return NextResponse.json({ error: 'Invoices are limited to admins, sales and finance.' }, { status: 403 });
 
-  const seedId = new URL(req.url).searchParams.get('seed');
+  const params = new URL(req.url).searchParams;
+  const seedId = params.get('seed');
   if (seedId) return NextResponse.json({ seed: await seedFromProject(seedId) });
+  // Server-side customer search (QuickBooks has 2000+ customers — too many to preload).
+  const custSearch = params.get('customer_search');
+  if (custSearch != null) return NextResponse.json({ customers: (await qbSearchCustomers(custSearch)).customers || [] });
 
   const invoices = (await query(`select ${INV_COLS} from ops.invoice order by created_at desc limit 500`)).rows;
   const projects = (await query(
@@ -75,14 +79,22 @@ export async function GET(req) {
       else { if (!custMap[k].email) custMap[k].email = p.email || ''; if (!custMap[k].address) custMap[k].address = htmlToText(p.address) || ''; }
     }
   } catch { /* 0170 absent */ }
-  const customers = Object.values(custMap).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-
-  // QuickBooks item/price list — only when connected (best-effort, degrades to []).
+  // QuickBooks data — only when connected (best-effort, degrades to []).
   const qb = await qbStatus();
   let qbItems = [];
-  if (qb.connected) { try { qbItems = (await qbFetchItems()).items || []; } catch { qbItems = []; } }
+  let qbProjectManagers = [];
+  let qbEmployees = [];
+  let qbClasses = [];
+  if (qb.connected) {
+    // NOTE: QB customers are NOT preloaded (2000+) — searched server-side via ?customer_search=.
+    try { qbItems = (await qbFetchItems()).items || []; } catch { qbItems = []; }
+    try { qbProjectManagers = (await qbFetchProjectManagers()).managers || []; } catch { qbProjectManagers = []; }
+    try { qbEmployees = (await qbFetchEmployees()).employees || []; } catch { qbEmployees = []; }
+    try { qbClasses = (await qbFetchClasses()).classes || []; } catch { qbClasses = []; }
+  }
+  const customers = Object.values(custMap).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
-  return NextResponse.json({ canEdit: true, invoices, projects, products, customers, qbItems, qb });
+  return NextResponse.json({ canEdit: true, invoices, projects, products, customers, qbItems, qbProjectManagers, qbEmployees, qbClasses, qb });
 }
 
 // Build autofill (customer + addresses + line items) from a project.
@@ -95,21 +107,70 @@ async function seedFromProject(projectId) {
   if (!ag) return null;
   let prop = null;
   try {
-    const props = (await query('select contract_number, customer_name, customer_email, address from ops.project_proposal')).rows;
+    const props = (await query('select id::text as id, contract_number, customer_name, customer_email, address, deal_customer from ops.project_proposal')).rows;
     const byC = {}, byN = {};
     for (const p of props) { const c = normSo(p.contract_number); if (c && !(c in byC)) byC[c] = p; const n = normName(p.customer_name); if (n && !(n in byN)) byN[n] = p; }
     prop = (ag.contract_number && byC[normSo(ag.contract_number)]) || byN[normName(ag.counterparty)] || null;
   } catch { /* 0170 absent */ }
-  const cart = (await query(
-    `select sku, product_name, coalesce(quantity,0) as quantity, cn_sku_id
-       from inventory.project_allocation where project_id = $1 and cn_sku_id is not null order by created_at`, [projectId],
+  // Inventory line items — the project's pick-list. Cart lines can sit under the
+  // agreement id OR the pre-agreement proposal id (same as checkout), so pull both.
+  // When the list has been "fixed" (checked out — stock consumed, cart locked),
+  // those consumed rows are the authoritative bill-for list; prefer them. Otherwise
+  // fall back to the current (not-yet-checked-out) allocations so it still autofills.
+  const allocIds = [projectId];
+  if (prop?.id && prop.id !== projectId) allocIds.push(prop.id);
+  const allocs = (await query(
+    `select sku, product_name, coalesce(quantity,0) as quantity, cn_sku_id, consumed_at
+       from inventory.project_allocation
+      where project_id = any($1::text[]) and cn_sku_id is not null order by created_at`, [allocIds],
   )).rows;
-  const addr = ag.client_address || htmlToText(prop?.address) || '';
+  const consumed = allocs.filter((r) => r.consumed_at);
+  const inventory_fixed = consumed.length > 0;     // the cart has been checked out
+  const cart = inventory_fixed ? consumed : allocs; // bill for the fixed list when present
+  // The customer + address can come from several sources that often disagree: the
+  // Final Proposal Form (the project's own intake), the connected HubSpot deal, and
+  // the signed agreement (whose extracted fields can be junk/placeholder — e.g. an
+  // address of "RR"). Rather than silently pick one, return a per-field list of
+  // suggestions the UI offers as one-click chips, and DEFAULT each field to the
+  // Final Proposal Form value (most authoritative for the project), falling back to
+  // the next available source only when the proposal's value is blank.
+  const company = prop?.deal_customer?.company || {};
+  const contact = prop?.deal_customer?.contact || {};
+  const dedup = (arr) => {
+    const seen = new Set(); const out = [];
+    for (const x of arr) {
+      const value = (x.value == null ? '' : String(x.value)).trim();
+      if (value && !seen.has(value.toLowerCase())) { seen.add(value.toLowerCase()); out.push({ source: x.source, label: x.label, value }); }
+    }
+    return out;
+  };
+  const PF = 'Final Proposal Form', HS = 'HubSpot deal', AG = 'Agreement';
+  const sName = dedup([
+    { source: 'proposal', label: PF, value: prop?.customer_name },
+    { source: 'hubspot', label: HS, value: company.name },
+    { source: 'agreement', label: AG, value: ag.counterparty },
+  ]);
+  const sEmail = dedup([
+    { source: 'proposal', label: PF, value: prop?.customer_email },
+    { source: 'hubspot', label: HS, value: contact.email },
+    { source: 'agreement', label: AG, value: ag.client_email },
+  ]);
+  const sAddr = dedup([
+    { source: 'proposal', label: PF, value: htmlToText(prop?.address) },
+    { source: 'hubspot', label: HS, value: company.address },
+    { source: 'agreement', label: AG, value: ag.client_address },
+  ]);
+  // Default = the Final Proposal Form value when present, else the first available.
+  const pref = (list) => (list.find((x) => x.source === 'proposal') || list[0])?.value || '';
   return {
     project_id: ag.id, project_number: ag.project_number,
-    customer_name: ag.counterparty || prop?.customer_name || '',
-    customer_email: ag.client_email || prop?.customer_email || '',
-    billing_address: addr, shipping_address: addr,
+    customer_name: pref(sName),
+    customer_email: pref(sEmail),
+    billing_address: pref(sAddr),
+    shipping_address: pref(sAddr),
+    suggest: { customer_name: sName, customer_email: sEmail, billing_address: sAddr, shipping_address: sAddr },
+    inventory_fixed,                 // true → lines came from a checked-out (locked) cart
+    inventory_count: cart.length,    // how many inventory lines were autofilled
     lines: cart.map((c) => ({ sku: c.sku, product_name: c.product_name, description: '', quantity: Number(c.quantity) || 1, unit_price: 0, taxable: true, cn_sku_id: c.cn_sku_id })),
   };
 }
@@ -157,6 +218,7 @@ export async function POST(req) {
     stampConfirm ? user.email : (current?.confirmed_by ?? null), user.email,
     f('po_number'), f('payment_instructions'),
     JSON.stringify(b.tags !== undefined ? normTags(b.tags) : (current?.tags || [])), f('class_name'),
+    f('project_manager'),
   ];
 
   const row = await mutateAs(user.email, async (q) => {
@@ -166,7 +228,7 @@ export async function POST(req) {
            customer_name=$7, customer_email=$8, billing_address=$9, shipping_address=$10, invoice_number=$11,
            invoice_date=$12, due_date=$13, terms=$14, customer_message=$15, discount_type=$16, discount_value=$17,
            tax_rate=$18, confirmed_by=$19, po_number=$21, payment_instructions=$22, tags=$23::jsonb, class_name=$24,
-           confirmed_at=${stampConfirm ? 'now()' : 'confirmed_at'}, updated_at=now()
+           project_manager=$25, confirmed_at=${stampConfirm ? 'now()' : 'confirmed_at'}, updated_at=now()
          where id=$1 returning ${INV_COLS}`,
         vals,
       );
@@ -175,10 +237,10 @@ export async function POST(req) {
     const { rows } = await q(
       `insert into ops.invoice (project_id, status, currency, lines, notes, customer_name, customer_email,
          billing_address, shipping_address, invoice_number, invoice_date, due_date, terms, customer_message,
-         discount_type, discount_value, tax_rate, confirmed_by, confirmed_at, created_by, po_number, payment_instructions, tags, class_name, updated_at)
+         discount_type, discount_value, tax_rate, confirmed_by, confirmed_at, created_by, po_number, payment_instructions, tags, class_name, project_manager, updated_at)
        values ($2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,
          coalesce($11, 'INV-' || lpad(nextval('ops.invoice_number_seq')::text, 4, '0')),
-         $12,$13,$14,$15,$16,$17,$18,$19, ${stampConfirm ? 'now()' : 'null'}, $20, $21, $22, $23::jsonb, $24, now())
+         $12,$13,$14,$15,$16,$17,$18,$19, ${stampConfirm ? 'now()' : 'null'}, $20, $21, $22, $23::jsonb, $24, $25, now())
        returning ${INV_COLS}`,
       vals,
     );
@@ -233,11 +295,30 @@ async function pushToQb(inv, user) {
       ...(classId ? { ClassRef: { value: classId } } : {}),
     },
   }));
+  // Map P.O. Number + Project Manager into real QB sales custom fields when ones
+  // exist (matched by name); QB custom-field StringValue maxes at 31 chars.
+  let cfDefs = [];
+  try { cfDefs = (await qbFetchSalesCustomFields()).fields || []; } catch { cfDefs = []; }
+  const findCF = (re) => cfDefs.find((c) => re.test(c.name));
+  const poF = inv.po_number ? findCF(/p\.?\s*o\.?|purchase\s*order/i) : null;
+  const pmF = inv.project_manager ? findCF(/project\s*manager|\bpm\b|manager/i) : null;
+  const customFields = [];
+  if (poF) customFields.push({ DefinitionId: poF.id, Name: poF.name, Type: 'StringType', StringValue: String(inv.po_number).slice(0, 31) });
+  if (pmF) customFields.push({ DefinitionId: pmF.id, Name: pmF.name, Type: 'StringType', StringValue: String(inv.project_manager).slice(0, 31) });
+
   const memo = [inv.customer_message, inv.payment_instructions].filter(Boolean).join('\n\n');
-  const priv = [inv.notes, inv.po_number ? `PO: ${inv.po_number}` : '', inv.tags?.length ? `Tags: ${inv.tags.join(', ')}` : ''].filter(Boolean).join('\n');
+  // PrivateNote carries whatever has no native QB field: Tags always (no Tag API),
+  // and PO/PM only if they didn't land in a custom field above.
+  const priv = [
+    inv.notes,
+    (inv.po_number && !poF) ? `PO: ${inv.po_number}` : '',
+    (inv.project_manager && !pmF) ? `Project Manager: ${inv.project_manager}` : '',
+    inv.tags?.length ? `Tags: ${inv.tags.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
   const body = {
     CustomerRef: { value: String(customerId) },
     Line: qbLines,
+    ...(customFields.length ? { CustomField: customFields } : {}),
     ...(inv.customer_email ? { BillEmail: { Address: inv.customer_email } } : {}),
     ...(inv.invoice_date ? { TxnDate: String(inv.invoice_date).slice(0, 10) } : {}),
     ...(inv.due_date ? { DueDate: String(inv.due_date).slice(0, 10) } : {}),

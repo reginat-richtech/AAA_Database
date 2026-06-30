@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { PageHeader } from '../_components/blueprint';
 import ComboSearch from '../_components/ComboSearch';
 
@@ -7,7 +7,18 @@ const money = (n) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFra
 const TERMS = ['', 'Due on receipt', 'Net 15', 'Net 30', 'Net 60'];
 const today = () => new Date().toISOString().slice(0, 10);
 const blankLine = () => ({ service_date: '', product_name: '', description: '', quantity: 1, unit_price: 0, amount: 0, taxable: true, sku: null, cn_sku_id: null, qb_item_id: null });
-const blankForm = () => ({ id: null, project_id: '', customer_name: '', customer_email: '', billing_address: '', shipping_address: '', invoice_number: '', po_number: '', invoice_date: today(), due_date: '', terms: '', class_name: '', tags: [], customer_message: '', payment_instructions: '', notes: '', discount_type: 'amount', discount_value: '', tax_rate: '', currency: 'USD', lines: [blankLine()], status: 'draft' });
+
+// Default text pre-filled into "Payment instructions" on every NEW invoice (editable;
+// existing invoices keep their saved value). Plain text — it becomes the QuickBooks memo.
+const DEFAULT_PAYMENT_INSTRUCTIONS = `Please make checks payable to: Richtech Robotics Inc.
+
+Wiring Instructions:
+Bank of America
+Account Number: 501028165183
+ACH Routing #: 122400724
+Wires Routing #: 026009593`;
+
+const blankForm = () => ({ id: null, project_id: '', customer_name: '', customer_email: '', billing_address: '', shipping_address: '', invoice_number: '', po_number: '', project_manager: '', invoice_date: today(), due_date: '', terms: '', class_name: '', tags: [], customer_message: '', payment_instructions: DEFAULT_PAYMENT_INSTRUCTIONS, notes: '', discount_type: 'amount', discount_value: '', tax_rate: '', currency: 'USD', lines: [blankLine()], status: 'draft' });
 
 // Line amount = the explicit (editable) amount if set, else qty × rate.
 const lineAmount = (l) => (l.amount !== '' && l.amount != null ? Number(l.amount) : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0));
@@ -37,6 +48,20 @@ export default function Invoices() {
   const [err, setErr] = useState(null);
   const [prodQ, setProdQ] = useState(''); // product search box
   const [tagInput, setTagInput] = useState('');
+  const [qbCust, setQbCust] = useState([]); // live QuickBooks customer-search results
+  const [suggest, setSuggest] = useState(null); // per-field source suggestions from the linked project
+  const [lineInfo, setLineInfo] = useState(null); // {fixed, count} — inventory lines autofilled from the project
+  const custTimer = useRef(null);
+
+  // Debounced server-side QuickBooks customer search (2000+ customers → not preloaded).
+  function searchCustomers(qstr) {
+    clearTimeout(custTimer.current);
+    if (!qstr || qstr.trim().length < 2) { setQbCust([]); return; }
+    custTimer.current = setTimeout(async () => {
+      const j = await fetch(`/api/invoices?customer_search=${encodeURIComponent(qstr)}`).then((r) => r.json()).catch(() => ({}));
+      setQbCust(j.customers || []);
+    }, 300);
+  }
 
   const load = () => fetch('/api/invoices').then((r) => r.json()).then((d) => { if (d?.error) setErr(d.error); else setData(d); }).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -64,10 +89,22 @@ export default function Invoices() {
   const qbPriced = !!data.qbItems?.length;
   const existingTags = [...new Set((data.invoices || []).flatMap((iv) => iv.tags || []))].sort();
   const existingClasses = [...new Set((data.invoices || []).map((iv) => iv.class_name).filter(Boolean))].sort();
+  const classNames = [...new Set([...((data.qbClasses || []).map((c) => c.name)), ...existingClasses])].filter(Boolean);
+  const classOptions = classNames.map((n, i) => ({ key: `cl-${i}`, label: n, sub: '', data: n }));
   function addTag(raw) { const t = String(raw || '').trim(); if (!t) return; setForm((f) => (f.tags?.includes(t) ? f : { ...f, tags: [...(f.tags || []), t] })); setTagInput(''); }
   const removeTag = (t) => setForm((f) => ({ ...f, tags: (f.tags || []).filter((x) => x !== t) }));
-  const customerOptions = (data.customers || []).map((c, i) => ({ key: `c-${i}`, label: c.name, sub: c.email || '', data: c }));
+  // Customer options = local (agreement/proposal) customers + live QuickBooks matches, deduped by name.
+  const customerOptions = (() => {
+    const seen = new Set();
+    const out = [];
+    for (const c of (data.customers || [])) { const k = String(c.name || '').toLowerCase(); if (k && !seen.has(k)) { seen.add(k); out.push({ key: `l-${k}`, label: c.name, sub: c.email || '', data: c }); } }
+    for (const c of qbCust) { const k = String(c.name || '').toLowerCase(); if (k && !seen.has(k)) { seen.add(k); out.push({ key: `q-${c.id}`, label: c.name, sub: [c.email, 'QuickBooks'].filter(Boolean).join(' · '), data: c }); } }
+    return out;
+  })();
   const productSearchOptions = productOptions.map((p) => ({ key: p.key, label: p.name, sub: [p.sku, p.unit_price != null ? money(p.unit_price) : null].filter(Boolean).join(' · '), data: p }));
+  // Project Manager options = QB custom-field names + QB employees, deduped.
+  const pmNames = [...new Set([...(data.qbProjectManagers || []), ...((data.qbEmployees || []).map((e) => e.name))])].filter(Boolean);
+  const pmOptions = pmNames.map((n, i) => ({ key: `pm-${i}`, label: n, sub: '', data: n }));
 
   // Pick a customer from the dropdown → fill name + (their) email/address.
   function pickCustomer(o) {
@@ -93,9 +130,15 @@ export default function Invoices() {
 
   async function linkProject(pid) {
     set('project_id', pid);
-    if (!pid) return;
+    if (!pid) { setSuggest(null); setLineInfo(null); return; }
     const j = await fetch(`/api/invoices?seed=${encodeURIComponent(pid)}`).then((r) => r.json()).catch(() => ({}));
-    if (j?.seed) setForm((f) => ({ ...f, ...j.seed, project_id: pid, lines: j.seed.lines?.length ? j.seed.lines : f.lines }));
+    if (j?.seed) {
+      // keep suggestions + the inventory status flags out of the saved invoice
+      const { suggest: sg, inventory_fixed, inventory_count, ...seed } = j.seed;
+      setSuggest(sg || null);
+      setLineInfo(inventory_count ? { fixed: !!inventory_fixed, count: inventory_count } : null);
+      setForm((f) => ({ ...f, ...seed, project_id: pid, lines: seed.lines?.length ? seed.lines : f.lines }));
+    }
   }
 
   async function act(action) {
@@ -118,7 +161,7 @@ export default function Invoices() {
       <>
         <PageHeader title="Invoices" sub="Create a QuickBooks-style invoice — pick a customer (or link a project to autofill), add line items, confirm, then push to QuickBooks." sheet="Invoices" />
         <div className="toolbar">
-          <button onClick={() => { setForm(blankForm()); setMsg(null); }}>+ New invoice</button>
+          <button onClick={() => { setForm(blankForm()); setSuggest(null); setLineInfo(null); setMsg(null); }}>+ New invoice</button>
           {!data.qb?.connected && <span className="note" style={{ color: '#a16207' }}>QuickBooks not connected — drafting works; to push, <a href="/api/quickbooks/connect">Connect QuickBooks ↗</a>.</span>}
           <span className="note" style={{ marginLeft: 'auto' }}>{data.invoices.length} invoice(s)</span>
         </div>
@@ -129,7 +172,7 @@ export default function Invoices() {
               {data.invoices.map((iv) => {
                 const t = calc(iv);
                 return (
-                  <tr key={iv.id} onClick={() => { setForm(toForm(iv)); setMsg(null); }} style={{ cursor: 'pointer' }}>
+                  <tr key={iv.id} onClick={() => { setForm(toForm(iv)); setSuggest(null); setLineInfo(null); setMsg(null); }} style={{ cursor: 'pointer' }}>
                     <td>{iv.invoice_number || iv.qb_doc_number || <span className="note">—</span>}</td>
                     <td>{iv.customer_name || <span className="note">—</span>}</td>
                     <td>{iv.invoice_date ? String(iv.invoice_date).slice(0, 10) : <span className="note">—</span>}</td>
@@ -150,6 +193,27 @@ export default function Invoices() {
   const t = calc(form);
   const status = form.status || 'draft';
   const editable = status !== 'pushed';
+  // One-click source suggestions under a field (only when sources actually differ).
+  // The Final Proposal Form is the default; HubSpot / Agreement are alternatives.
+  const recRow = (field) => {
+    const list = suggest?.[field];
+    if (!list || list.length < 2) return null;
+    return (
+      <span className="inv-recs">
+        <span className="inv-recs-lbl">from</span>
+        {list.map((r) => {
+          const on = (form[field] || '') === r.value;
+          const short = r.value.length > 46 ? `${r.value.slice(0, 46)}…` : r.value;
+          return (
+            <button type="button" key={r.source} className={`inv-rec${on ? ' on' : ''}`} disabled={!editable}
+              title={`${r.label}: ${r.value}`} onClick={() => set(field, r.value)}>
+              <b>{r.label}{r.source === 'proposal' ? ' · default' : ''}</b>{short}
+            </button>
+          );
+        })}
+      </span>
+    );
+  };
   return (
     <>
       <PageHeader title="Invoices" sheet="Invoices" />
@@ -158,19 +222,20 @@ export default function Invoices() {
         <span className={`inv-st s-${status}`}>{status}</span>
         {form.qb_doc_number && <span className="note">QB invoice #{form.qb_doc_number}</span>}
         {form.confirmed_by && status !== 'draft' && <span className="note">confirmed by {form.confirmed_by}</span>}
+        {form.project_id && <a href={`/project-tracker?open=${encodeURIComponent(form.project_id)}`} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto' }}>📋 Open in Project Tracker ↗</a>}
       </div>
       {msg && <p className="note" style={{ color: msg.err ? '#dc2626' : '#16a34a' }}>{msg.err || msg.text}</p>}
       {!data.qb?.connected && <p className="note" style={{ color: '#a16207' }}>⚠ QuickBooks not connected — drafting & confirming work; to <b>push</b>, an admin must <a href="/api/quickbooks/connect">Connect QuickBooks ↗</a> first (this is separate from a Data Sync).</p>}
 
       <div className="panel inv-form">
         <div className="inv-row">
-          <label className="inv-grow">Customer<ComboSearch value={form.customer_name} disabled={!editable} placeholder="Search or type a customer…" options={customerOptions} onChange={(v) => set('customer_name', v)} onPick={pickCustomer} /></label>
-          <label className="inv-grow">Customer email<input value={form.customer_email} disabled={!editable} onChange={(e) => set('customer_email', e.target.value)} /></label>
+          <label className="inv-grow">Customer<ComboSearch selectOnly value={form.customer_name} disabled={!editable} placeholder="Search and pick a QuickBooks customer…" options={customerOptions} onSearch={searchCustomers} onPick={pickCustomer} />{recRow('customer_name')}</label>
+          <label className="inv-grow">Customer email<input value={form.customer_email} disabled={!editable} onChange={(e) => set('customer_email', e.target.value)} />{recRow('customer_email')}</label>
           <label>Link project (autofill)<select value={form.project_id} disabled={!editable} onChange={(e) => linkProject(e.target.value)}><option value="">— none —</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.project_number} · {p.counterparty || p.title}</option>)}</select></label>
         </div>
         <div className="inv-row">
-          <label className="inv-grow">Billing address<textarea rows={3} value={form.billing_address} disabled={!editable} onChange={(e) => set('billing_address', e.target.value)} /></label>
-          <label className="inv-grow">Shipping address<textarea rows={3} value={form.shipping_address} disabled={!editable} onChange={(e) => set('shipping_address', e.target.value)} /></label>
+          <label className="inv-grow">Billing address<textarea rows={3} value={form.billing_address} disabled={!editable} onChange={(e) => set('billing_address', e.target.value)} />{recRow('billing_address')}</label>
+          <label className="inv-grow">Shipping address<textarea rows={3} value={form.shipping_address} disabled={!editable} onChange={(e) => set('shipping_address', e.target.value)} />{recRow('shipping_address')}</label>
         </div>
         <div className="inv-row">
           <label>Invoice #<input value={form.invoice_number || ''} disabled readOnly placeholder={form.id ? '' : 'Assigned on save'} /></label>
@@ -178,10 +243,14 @@ export default function Invoices() {
           <label>Due date<input type="date" value={form.due_date} disabled={!editable} onChange={(e) => set('due_date', e.target.value)} /></label>
           <label>Terms<select value={form.terms} disabled={!editable} onChange={(e) => set('terms', e.target.value)}>{TERMS.map((x) => <option key={x} value={x}>{x || '—'}</option>)}</select></label>
           <label>P.O. Number<input value={form.po_number || ''} disabled={!editable} onChange={(e) => set('po_number', e.target.value)} /></label>
+          <label className="inv-grow" style={{ maxWidth: 280 }}>Project Manager{pmOptions.length ? <span className="note" style={{ fontWeight: 400 }}> · from QuickBooks</span> : null}
+            <ComboSearch value={form.project_manager || ''} disabled={!editable} placeholder={pmOptions.length ? 'Pick or type a name…' : 'Type a name…'} options={pmOptions} onChange={(v) => set('project_manager', v)} onPick={(o) => set('project_manager', o.data)} />
+          </label>
         </div>
         <div className="inv-row">
-          <label>Class<input list="inv-class" value={form.class_name || ''} disabled={!editable} placeholder="e.g. Robotics · West" onChange={(e) => set('class_name', e.target.value)} /></label>
-          <datalist id="inv-class">{existingClasses.map((c, i) => <option key={i} value={c} />)}</datalist>
+          <label style={{ minWidth: 200 }}>Class{(data.qbClasses?.length) ? <span className="note" style={{ fontWeight: 400 }}> · from QuickBooks</span> : null}
+            <ComboSearch selectOnly value={form.class_name || ''} disabled={!editable} placeholder="Pick a class…" options={classOptions} onPick={(o) => set('class_name', o.data)} />
+          </label>
           <label className="inv-grow">Tags
             <div className="inv-tags">
               {(form.tags || []).map((t) => <span key={t} className="inv-tag">{t}{editable && <button type="button" onClick={() => removeTag(t)}>✕</button>}</span>)}
@@ -197,6 +266,14 @@ export default function Invoices() {
               <ComboSearch value={prodQ} placeholder="🔍 Search products by name or SKU…" options={productSearchOptions} onChange={setProdQ} onPick={addProductOption} />
             </label>
           </div>
+        )}
+        {lineInfo && (
+          <p className={`inv-linenote${lineInfo.fixed ? ' fixed' : ''}`}>
+            {lineInfo.fixed
+              ? `🔒 ${lineInfo.count} line${lineInfo.count === 1 ? '' : 's'} autofilled from this project's checked-out inventory list.`
+              : `📦 ${lineInfo.count} line${lineInfo.count === 1 ? '' : 's'} autofilled from this project's inventory pick-list — not yet checked out, so quantities may still change.`}
+            {' '}Set rates below{!data.qb?.connected ? '' : ' (or pick a product to pull its QuickBooks price)'}.
+          </p>
         )}
         <div style={{ overflowX: 'auto' }}>
           <table className="inv-lines">
