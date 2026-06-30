@@ -169,7 +169,9 @@ export async function qbFetchProjectManagers() {
 // The QuickBooks customer list: { customers: [{id, name, email, phone, address}] }.
 const qbAddr = (a) => (a ? [a.Line1, a.Line2, [a.City, a.CountrySubDivisionCode, a.PostalCode].filter(Boolean).join(' '), a.Country].filter(Boolean).join('\n') : '');
 export async function qbFetchCustomers() {
-  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select Id, DisplayName, PrimaryEmailAddr, PrimaryPhone, BillAddr from Customer where Active = true maxresults 1000')}`);
+  // NOTE: QB's query language rejects BillAddr (and other sub-entities) in an explicit
+  // column list ("Property BillAddr not found"). Must use `select *` to get the address.
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent('select * from Customer where Active = true maxresults 1000')}`);
   if (r.error) return { error: r.error, customers: [] };
   const customers = (r.data?.QueryResponse?.Customer || []).map((c) => ({
     id: String(c.Id), name: c.DisplayName,
@@ -184,7 +186,8 @@ export async function qbFetchCustomers() {
 export async function qbSearchCustomers(qstr) {
   const safe = String(qstr || '').replace(/['\\%_]/g, ' ').trim();
   if (!safe) return { customers: [] };
-  const r = await qbApiRequest(`/query?query=${encodeURIComponent(`select Id, DisplayName, PrimaryEmailAddr, PrimaryPhone, BillAddr from Customer where DisplayName like '%${safe}%' maxresults 30`)}`);
+  // `select *` (not an explicit column list) — QB rejects BillAddr as a named property.
+  const r = await qbApiRequest(`/query?query=${encodeURIComponent(`select * from Customer where DisplayName like '%${safe}%' maxresults 30`)}`);
   if (r.error) return { error: r.error, customers: [] };
   const customers = (r.data?.QueryResponse?.Customer || []).map((c) => ({
     id: String(c.Id), name: c.DisplayName,
