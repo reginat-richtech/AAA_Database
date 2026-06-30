@@ -210,39 +210,45 @@ export async function POST(req) {
 
   // Field set (use body value if present, else keep current).
   const f = (k, fn = orNull) => (b[k] !== undefined ? fn(b[k]) : (current?.[k] ?? null));
-  const vals = [
-    id, f('project_id'), status, f('currency') || current?.currency || 'USD', JSON.stringify(lines), f('notes'),
+  // The settable columns shared by UPDATE and INSERT, in a fixed order (NO id, NO created_by).
+  // Each query gets its own correctly-numbered params so there are never unused parameters
+  // (an unused $N makes Postgres throw "could not determine data type of parameter $N").
+  const common = [
+    f('project_id'), status, f('currency') || current?.currency || 'USD', JSON.stringify(lines), f('notes'),
     f('customer_name'), f('customer_email'), f('billing_address'), f('shipping_address'),
     f('invoice_number'), f('invoice_date', dateOrNull), f('due_date', dateOrNull), f('terms'), f('customer_message'),
     f('discount_type'), f('discount_value', numOrNull), f('tax_rate', numOrNull),
-    stampConfirm ? user.email : (current?.confirmed_by ?? null), user.email,
+    stampConfirm ? user.email : (current?.confirmed_by ?? null), // confirmed_by (index 17)
     f('po_number'), f('payment_instructions'),
     JSON.stringify(b.tags !== undefined ? normTags(b.tags) : (current?.tags || [])), f('class_name'),
     f('project_manager'),
-  ];
+  ]; // 23 params
 
   const row = await mutateAs(user.email, async (q) => {
     if (id) {
+      // $1 = id (WHERE); $2..$24 = the 23 common fields. created_by is intentionally NOT updated.
       const { rows } = await q(
         `update ops.invoice set project_id=$2, status=$3, currency=$4, lines=$5::jsonb, notes=$6,
            customer_name=$7, customer_email=$8, billing_address=$9, shipping_address=$10, invoice_number=$11,
            invoice_date=$12, due_date=$13, terms=$14, customer_message=$15, discount_type=$16, discount_value=$17,
-           tax_rate=$18, confirmed_by=$19, po_number=$21, payment_instructions=$22, tags=$23::jsonb, class_name=$24,
-           project_manager=$25, confirmed_at=${stampConfirm ? 'now()' : 'confirmed_at'}, updated_at=now()
+           tax_rate=$18, confirmed_by=$19, po_number=$20, payment_instructions=$21, tags=$22::jsonb, class_name=$23,
+           project_manager=$24, confirmed_at=${stampConfirm ? 'now()' : 'confirmed_at'}, updated_at=now()
          where id=$1 returning ${INV_COLS}`,
-        vals,
+        [id, ...common],
       );
       return rows[0];
     }
+    // INSERT: created_by ($19) spliced in right after confirmed_by; no id (it's generated). $1..$24.
+    const insertVals = [...common.slice(0, 18), user.email, ...common.slice(18)];
     const { rows } = await q(
       `insert into ops.invoice (project_id, status, currency, lines, notes, customer_name, customer_email,
          billing_address, shipping_address, invoice_number, invoice_date, due_date, terms, customer_message,
-         discount_type, discount_value, tax_rate, confirmed_by, confirmed_at, created_by, po_number, payment_instructions, tags, class_name, project_manager, updated_at)
-       values ($2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,
-         coalesce($11, 'INV-' || lpad(nextval('ops.invoice_number_seq')::text, 4, '0')),
-         $12,$13,$14,$15,$16,$17,$18,$19, ${stampConfirm ? 'now()' : 'null'}, $20, $21, $22, $23::jsonb, $24, $25, now())
+         discount_type, discount_value, tax_rate, confirmed_by, created_by, confirmed_at, po_number, payment_instructions, tags, class_name, project_manager, updated_at)
+       values ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,
+         coalesce($10, 'INV-' || lpad(nextval('ops.invoice_number_seq')::text, 4, '0')),
+         $11,$12,$13,$14,$15,$16,$17,$18, $19, ${stampConfirm ? 'now()' : 'null'}, $20, $21, $22::jsonb, $23, $24, now())
        returning ${INV_COLS}`,
-      vals,
+      insertVals,
     );
     return rows[0];
   });
