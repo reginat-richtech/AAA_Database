@@ -34,6 +34,9 @@ function calc(f) {
 // Load an existing invoice row into a form-shaped object.
 const toForm = (iv) => ({
   ...blankForm(), ...iv, project_id: iv.project_id || '',
+  // SO #: prefer the project's own sales-order number; if none was captured, fall back
+  // to the QuickBooks number (QB numbers pushed invoices as "SO####", e.g. SO7706).
+  so_number: iv.so_number || iv.qb_doc_number || '',
   discount_type: iv.discount_type || 'amount', discount_value: iv.discount_value ?? '', tax_rate: iv.tax_rate ?? '',
   invoice_date: iv.invoice_date ? String(iv.invoice_date).slice(0, 10) : '', due_date: iv.due_date ? String(iv.due_date).slice(0, 10) : '',
   customer_message: iv.customer_message || '', notes: iv.notes || '',
