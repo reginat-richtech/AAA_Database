@@ -100,7 +100,7 @@ export async function GET(req) {
 // Build autofill (customer + addresses + line items) from a project.
 async function seedFromProject(projectId) {
   const ag = (await query(
-    `select id::text as id, project_number, title, counterparty, salesman_email, contract_number,
+    `select id::text as id, project_number, title, counterparty, salesman_email, contract_number, proposal_id::text as proposal_id,
             extracted_json->>'client_email' as client_email, extracted_json->>'client_address' as client_address
        from ops.legal_agreement where id::text = $1`, [projectId],
   )).rows[0];
@@ -108,9 +108,13 @@ async function seedFromProject(projectId) {
   let prop = null;
   try {
     const props = (await query('select id::text as id, contract_number, customer_name, customer_email, address, deal_customer from ops.project_proposal')).rows;
-    const byC = {}, byN = {};
-    for (const p of props) { const c = normSo(p.contract_number); if (c && !(c in byC)) byC[c] = p; const n = normName(p.customer_name); if (n && !(n in byN)) byN[n] = p; }
-    prop = (ag.contract_number && byC[normSo(ag.contract_number)]) || byN[normName(ag.counterparty)] || null;
+    const byId = {}, byC = {}, byN = {};
+    for (const p of props) { byId[p.id] = p; const c = normSo(p.contract_number); if (c && !(c in byC)) byC[c] = p; const n = normName(p.customer_name); if (n && !(n in byN)) byN[n] = p; }
+    // Prefer the explicit proposal_id link (set by "+ Upload agreement"); then
+    // contract number; then customer name — same precedence as the tracker.
+    prop = (ag.proposal_id && byId[ag.proposal_id])
+      || (ag.contract_number && byC[normSo(ag.contract_number)])
+      || byN[normName(ag.counterparty)] || null;
   } catch { /* 0170 absent */ }
   // Inventory line items — the project's pick-list. Cart lines can sit under the
   // agreement id OR the pre-agreement proposal id (same as checkout), so pull both.
