@@ -249,7 +249,7 @@ export default function ProjectTracker() {
               {sh && <span className={`ship-chip ship-${sh.status}`} title={[sh.est_ship_date && `Ship ${sh.est_ship_date}`, sh.est_delivery_date && `Arrive ${sh.est_delivery_date}`, sh.carrier, sh.tracking_number && `#${sh.tracking_number}`].filter(Boolean).join(' · ') || undefined}>🚚 {shLabel}{sh.shipping_needed !== false && sh.status !== 'pending' ? ` · ${sh.status}` : ''}</span>}
               <span className="pc-link" onClick={(e) => e.stopPropagation()}>
                 {p.is_proposal_only
-                  ? <Link href={`/data-upload?sales_name=${encodeURIComponent(p.salesman_name || '')}&sales_email=${encodeURIComponent(p.salesman_email || '')}&contract=${encodeURIComponent(p.contract_number || '')}`} className="btnlink">+ Upload agreement ↗</Link>
+                  ? <Link href={`/data-upload?proposal=${encodeURIComponent(p.proposal_id || '')}&sales_name=${encodeURIComponent(p.salesman_name || '')}&sales_email=${encodeURIComponent(p.salesman_email || '')}&contract=${encodeURIComponent(p.contract_number || '')}`} className="btnlink">+ Upload agreement ↗</Link>
                   : <Link href={`/tech-request?agreement=${p.id}`}>Tech Request ↗</Link>}
                 {p.jotform_url && <> · <a href={p.jotform_url} target="_blank" rel="noreferrer">JotForm ↗</a></>}
                 {p.calendar_link && <> · <a href={p.calendar_link} target="_blank" rel="noreferrer">Calendar ↗</a></>}

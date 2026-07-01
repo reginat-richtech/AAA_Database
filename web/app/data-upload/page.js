@@ -9,7 +9,7 @@ export default function DataUpload() {
   const router = useRouter();
   const [meta, setMeta] = useState({ models: [], service_types: [], agreement_types: [] });
   const [list, setList] = useState([]);
-  const [up, setUp] = useState({ salesman_name: '', salesman_email: '', contract: '', file: null });
+  const [up, setUp] = useState({ salesman_name: '', salesman_email: '', contract: '', proposal: '', file: null });
   const [editable, setEditable] = useState(true);   // false → finalized, admin-only
   const [cur, setCur] = useState(null);          // loaded agreement (with .extracted)
   const [fields, setFields] = useState(null);    // editable headline fields
@@ -20,14 +20,16 @@ export default function DataUpload() {
   useEffect(() => {
     fetch('/api/data-upload/robot-models').then((r) => r.json()).then(setMeta).catch(() => {});
     loadList();
-    // Prefill the salesperson when arriving from a proposal's "Upload agreement"
-    // link (?sales_name=&sales_email=). The inputs stay editable.
+    // Prefill from a proposal's "Upload agreement" link. `proposal` (the proposal
+    // id) is the deterministic link that attaches this agreement to that exact
+    // proposal in the tracker; sales_name/email/contract just prefill fields.
     const sp = new URLSearchParams(window.location.search);
     const sName = sp.get('sales_name') || '';
     const sEmail = sp.get('sales_email') || '';
     const contract = sp.get('contract') || '';
-    if (sName || sEmail || contract) {
-      setUp((s) => ({ ...s, salesman_name: sName || s.salesman_name, salesman_email: sEmail || s.salesman_email, contract: contract || s.contract }));
+    const proposal = sp.get('proposal') || '';
+    if (sName || sEmail || contract || proposal) {
+      setUp((s) => ({ ...s, salesman_name: sName || s.salesman_name, salesman_email: sEmail || s.salesman_email, contract: contract || s.contract, proposal: proposal || s.proposal }));
     }
   }, []);
   function loadList() {
@@ -58,6 +60,7 @@ export default function DataUpload() {
     fd.append('salesman_name', up.salesman_name);
     fd.append('salesman_email', up.salesman_email);
     fd.append('contract', up.contract);
+    fd.append('proposal_id', up.proposal);
     const r = await fetch('/api/data-upload', { method: 'POST', body: fd });
     const j = await r.json().catch(() => ({})); setBusy(false);
     if (!r.ok) { setMsg({ err: j.error || `Upload failed (HTTP ${r.status})` }); return; }

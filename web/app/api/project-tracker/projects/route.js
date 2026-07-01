@@ -15,7 +15,7 @@ export async function GET() {
 
   const agreements = (await query(
     `select id, project_number, filename, status, error, extract_method, agreement_type, title,
-            counterparty, robot_types, robot_count, salesman_name, salesman_email, contract_number, created_at,
+            counterparty, robot_types, robot_count, salesman_name, salesman_email, contract_number, proposal_id, created_at,
             extracted_json->>'client_contact_name' as client_contact_name,
             extracted_json->>'client_email'        as client_email,
             extracted_json->>'client_phone'        as client_phone,
@@ -107,12 +107,16 @@ export async function GET() {
   } catch (e) {
     console.warn('[project-tracker] ops.project_proposal unavailable — run migration 0170 to enable proposals:', e.message);
   }
-  // Index proposals two ways. Contract/SO number is the RELIABLE link (the agreement
-  // carries the proposal's contract_number from its upload); customer name is a
-  // best-effort fallback for agreements uploaded without a contract.
+  // Index proposals three ways. The agreement's proposal_id (set when the upload
+  // was started from a proposal's "+ Upload agreement") is the EXACT link and wins.
+  // Contract/SO number is the next-most-reliable (the agreement carries the
+  // proposal's contract_number); customer name is a best-effort last resort for
+  // agreements uploaded outside the proposal flow.
+  const propById = {};
   const propByCustomer = {};
   const propByContract = {};
   for (const p of proposals) {
+    propById[p.id] = p;
     const ck = normName(p.customer_name); if (ck && !(ck in propByCustomer)) propByCustomer[ck] = p;
     const cn = normSo(p.contract_number); if (cn && !(cn in propByContract)) propByContract[cn] = p;
   }
@@ -153,7 +157,8 @@ export async function GET() {
     const sub = subByAg[a.id] || null;
     const so = sub?.answers?.so_number;
     const conf = so ? confBySo[normSo(so)] : null;
-    const proposal = (a.contract_number && propByContract[normSo(a.contract_number)])
+    const proposal = (a.proposal_id && propById[a.proposal_id])
+      || (a.contract_number && propByContract[normSo(a.contract_number)])
       || propByCustomer[normName(a.counterparty)] || null;
     if (proposal) matchedProposalIds.add(proposal.id);
     const install = so ? installBySo[normSo(so)] || null : null;

@@ -64,6 +64,10 @@ export async function POST(request) {
   // Contract/SO # of the proposal this agreement is for (carried by the tracker's
   // "+ Upload agreement" link). Drives "submit once": one agreement per contract.
   const contract_number = String(form.get('contract') || '').trim() || null;
+  // The proposal this agreement was started from (carried by the tracker's
+  // "+ Upload agreement" link). Stored so the tracker attaches agreement→proposal
+  // by id — reliable even when there's no contract number and names differ.
+  const proposal_id = String(form.get('proposal_id') || '').trim() || null;
   if (!file || typeof file === 'string') {
     return NextResponse.json({ error: 'A PDF file is required.' }, { status: 400 });
   }
@@ -95,8 +99,8 @@ export async function POST(request) {
            status, error, agreement_type, title, counterparty, effective_date, execution_date,
            expiration_date, auto_renewal, contract_value, currency, governing_law,
            termination_notice_days, robot_types, robot_count, summary, extracted_json,
-           source_pdf, content_type, contract_number)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+           source_pdf, content_type, contract_number, proposal_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
          returning ${LIST_COLS}, extracted_json as extracted, summary`,
         [
           file.name || 'document.pdf', bytes.length, extract_method, user.email,
@@ -107,7 +111,7 @@ export async function POST(request) {
           hf.auto_renewal ?? null, hf.contract_value ?? null, hf.currency ?? 'USD',
           hf.governing_law ?? null, hf.termination_notice_days ?? null,
           hf.robot_types ?? null, hf.robot_count ?? null, hf.summary ?? null,
-          JSON.stringify(extracted || {}), bytes, contentType, contract_number,
+          JSON.stringify(extracted || {}), bytes, contentType, contract_number, proposal_id,
         ],
       );
       return rows[0];
