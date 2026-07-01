@@ -187,9 +187,15 @@ export function buildProject(a, submission, confirmation, approvedSubmissionIds 
     closure: installComplete,
   };
 
-  // current stage = furthest tracked node that is done
+  // Current stage = the furthest completed stage. Tracked stages use `done`; the
+  // two reference stages advance the counter too when complete — Invoice once one
+  // is attached, Finance once it auto-completes — so the "Stage N/9" number matches
+  // the lit bubbles (an attached invoice reads as Stage 3, not stuck at Agreement).
+  const stageDone = (s) => (s.key === 'invoice' ? projInvoices.length > 0
+    : s.key === 'finance' ? financeDone
+    : !!(s.tracked && done[s.key]));
   let stageIdx = 0;
-  PROJECT_STAGES.forEach((s, i) => { if (s.tracked && done[s.key]) stageIdx = i; });
+  PROJECT_STAGES.forEach((s, i) => { if (stageDone(s)) stageIdx = i; });
   const stageKey = PROJECT_STAGES[stageIdx].key;
 
   const tasksFor = (key) => {
@@ -339,7 +345,8 @@ export function buildProposalProject(proposal, invoices = []) {
     `/invoices?id=${iv.id}`));
   const done = { proposal: true };
   let stageIdx = 0;
-  PROJECT_STAGES.forEach((s, i) => { if (s.tracked && done[s.key]) stageIdx = i; });
+  // Invoice (reference stage) advances the counter too once one is attached.
+  PROJECT_STAGES.forEach((s, i) => { if (s.key === 'invoice' ? projInvoices.length > 0 : s.tracked && done[s.key]) stageIdx = i; });
   const type = projectTypeOf(p);
   const nodes = PROJECT_STAGES.map((s, i) => ({
     ...s,
