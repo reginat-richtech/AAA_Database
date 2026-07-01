@@ -71,18 +71,35 @@ export default function Invoices() {
   // (unsaved edits) starts false. Pass null to return to the list view.
   const openForm = (f) => { savedRef.current = f ? JSON.stringify(f) : null; setForm(f); };
 
-  // Deep link: /invoices?project=<id> → open a NEW invoice already linked to that
-  // project (autofills customer + lines). Used by the Project Tracker's
-  // "+ New invoice for this project" link so an empty connect-picker isn't a dead end.
+  // Deep link (runs once the invoice list has loaded):
+  //   /invoices?invoice=<id>   → open that specific existing invoice.
+  //   /invoices?project=<id>   → if the project ALREADY has an invoice, open its most
+  //                              recent one (so its number/details are right there);
+  //                              otherwise seed a NEW invoice linked to the project.
+  // Waiting for `loaded` matters: otherwise we'd always fall through to "new" before
+  // the existing invoices arrived. Used by the Project Tracker's invoice-stage links.
   const seededFromUrl = useRef(false);
   useEffect(() => {
-    if (seededFromUrl.current) return;
+    if (seededFromUrl.current || !loaded) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get('invoice');
+    const pid = params.get('project');
+    if (!openId && !pid) { seededFromUrl.current = true; return; }
     seededFromUrl.current = true;
-    const pid = new URLSearchParams(window.location.search).get('project');
-    if (!pid) return;
-    openForm(blankForm()); setSuggest(null); setLineInfo(null); setMsg(null);
-    linkProject(pid);
-  }, []);
+    setSuggest(null); setLineInfo(null); setMsg(null);
+    const invs = data.invoices || [];
+    const target = openId
+      ? invs.find((iv) => String(iv.id) === String(openId))
+      : invs.filter((iv) => String(iv.project_id) === String(pid))
+             .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+    if (target) {
+      openForm(toForm(target));
+      if (pid) setMsg({ text: 'Opened this project’s existing invoice. To add another, use “+ New invoice” from the list.' });
+    } else if (pid) {
+      openForm(blankForm());
+      linkProject(pid);
+    }
+  }, [loaded]);
 
   // Deep link: /invoices?id=<invoiceId> → open that existing invoice's detail once
   // the list has loaded. Lets links elsewhere (e.g. the Project Tracker's Invoice
